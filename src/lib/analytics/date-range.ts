@@ -7,8 +7,14 @@
  * calendar dates (UTC-anchored) so it is independent of the server's
  * local time zone.
  *
- * This module only defines the model + resolution logic. The visual
- * filter UI is intentionally not built yet (per scaffolding scope).
+ * This module defines the model + pure resolution logic only — no
+ * framework/UI/URL concerns. It has no `server-only` import and no data
+ * access, so it is safe to import directly (not via the
+ * `src/lib/analytics` barrel, which is server-only) from client
+ * components such as the global date-range control in
+ * `src/components/layout/date-range-control.tsx`. See
+ * `src/lib/date-range-params.ts` for the Next.js URL-search-params
+ * integration built on top of this module.
  */
 
 export type DateRangePreset =
@@ -19,6 +25,7 @@ export type DateRangePreset =
   | "lastWeek"
   | "thisMonth"
   | "lastMonth"
+  | "thisQuarter"
   | "thisYear"
   | "custom";
 
@@ -71,6 +78,12 @@ function startOfYear(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
 }
 
+/** Calendar quarters: Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec. */
+function startOfQuarter(date: Date): Date {
+  const quarterStartMonth = Math.floor(date.getUTCMonth() / 3) * 3;
+  return new Date(Date.UTC(date.getUTCFullYear(), quarterStartMonth, 1));
+}
+
 /**
  * Resolves a preset (or custom range) into a concrete `DateRange`,
  * relative to `referenceDate` (defaults to now). Callers doing
@@ -117,6 +130,9 @@ export function resolveDateRange(
       const lastMonthStart = startOfMonth(lastMonthEnd);
       return { from: toISODate(lastMonthStart), to: toISODate(endOfMonth(lastMonthEnd)) };
     }
+
+    case "thisQuarter":
+      return { from: toISODate(startOfQuarter(today)), to: toISODate(today) };
 
     case "thisYear":
       return { from: toISODate(startOfYear(today)), to: toISODate(today) };

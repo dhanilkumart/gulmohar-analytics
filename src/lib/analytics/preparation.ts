@@ -122,3 +122,38 @@ export async function getWastagePercentageTrend(
     };
   });
 }
+
+export interface PreparationTrendPoint {
+  period: string;
+  preparedQuantity: number;
+  soldQuantity: number;
+  wastedQuantity: number;
+}
+
+/**
+ * Prepared/sold/wasted quantities over time, summed across the 8 tracked
+ * preparation products per period (not restaurant-wide). This is the one
+ * genuinely-missing aggregation needed for a "Prepared vs Sold by Day"
+ * chart — `getWastagePercentageTrend` above already sums prepared/wasted
+ * per period but not sold. Added as a direct sibling of that function,
+ * reusing the exact same `sumByPeriod`/`enumeratePeriods` pattern (no new
+ * formula, no new business rule — just one more already-existing field
+ * from the same `preparation.json` rows).
+ */
+export async function getPreparationTrend(
+  range: DateRange,
+  granularity: TrendGranularity = resolveTrendGranularity(range)
+): Promise<PreparationTrendPoint[]> {
+  const preparationInRange = await getPreparationInRange(range);
+
+  const preparedSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.prepared_quantity);
+  const soldSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.sold_quantity);
+  const wastedSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.wasted_quantity);
+
+  return enumeratePeriods(range, granularity).map((period) => ({
+    period,
+    preparedQuantity: preparedSums.get(period) ?? 0,
+    soldQuantity: soldSums.get(period) ?? 0,
+    wastedQuantity: wastedSums.get(period) ?? 0,
+  }));
+}
