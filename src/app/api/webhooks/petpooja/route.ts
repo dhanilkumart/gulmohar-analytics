@@ -80,29 +80,51 @@ export async function POST(
     let insertedEventId: number | undefined;
     try {
       const supabase = getSupabaseServerClient();
-      const { data, error: insertError } = await supabase
+      const insertRecord = {
+        event_type: eventType,
+        order_reference: orderReference,
+        payload: body, // Persist entire original unmodified JSON body
+        received_at: new Date().toISOString(),
+        processing_status: "received",
+      };
+
+      const { data, error: insertError, status: httpStatus } = await supabase
         .from("petpooja_webhook_events")
-        .insert({
-          event_type: eventType,
-          order_reference: orderReference,
-          payload: body, // Persist entire original unmodified JSON body
-          received_at: new Date().toISOString(),
-          processing_status: "received",
-        })
+        .insert(insertRecord)
         .select("id")
         .single();
 
       if (insertError) {
         logWebhookEvent("error", "Failed to persist Petpooja webhook to Supabase", {
+          operation: "insert_petpooja_webhook_events",
           order_reference: orderReference,
-          db_error_message: insertError.message,
           db_error_code: insertError.code,
+          db_error_message: insertError.message,
+          db_error_details: insertError.details,
+          db_error_hint: insertError.hint,
+          http_status: httpStatus,
         });
+
+        // Determine a safe diagnostic category without exposing raw SQL or internal messages
+        let diagnosticCategory = "DATABASE_INSERT_FAILED";
+        if (insertError.code === "PGRST301") {
+          diagnosticCategory = "AUTHENTICATION_FAILED";
+        } else if (insertError.code === "42501") {
+          diagnosticCategory = "PERMISSION_DENIED";
+        } else if (insertError.code === "42P01" || insertError.code === "PGRST204") {
+          diagnosticCategory = "TABLE_OR_COLUMN_NOT_FOUND";
+        } else if (insertError.code === "23505") {
+          diagnosticCategory = "DUPLICATE_KEY_VIOLATION";
+        } else if (insertError.code === "23502") {
+          diagnosticCategory = "NOT_NULL_VIOLATION";
+        }
 
         return NextResponse.json(
           {
             status: "error",
             message: "Failed to persist webhook event to database",
+            error_code: insertError.code,
+            diagnostic_category: diagnosticCategory,
           },
           { status: 500 }
         );
@@ -114,6 +136,7 @@ export async function POST(
         dbInitError instanceof Error ? dbInitError.message : "Database connection error";
 
       logWebhookEvent("error", "Database client initialization or connection failed", {
+        operation: "init_or_connect_supabase",
         order_reference: orderReference,
         error: dbErrorMessage,
       });
@@ -122,6 +145,7 @@ export async function POST(
         {
           status: "error",
           message: "Database service unavailable",
+          diagnostic_category: "CONNECTION_FAILED",
         },
         { status: 500 }
       );

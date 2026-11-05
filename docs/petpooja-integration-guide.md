@@ -207,7 +207,58 @@ LIMIT 5;
 
 ---
 
-## 8. Transition Plan to DigitalOcean VPS
+## 8. Troubleshooting & Diagnostics: Database Insert Failures
+
+### Issue: "Failed to persist webhook event to database" (HTTP 500)
+When the webhook validation succeeds but Supabase persistence fails, the route returns:
+```json
+{
+  "status": "error",
+  "message": "Failed to persist webhook event to database",
+  "error_code": "...",
+  "diagnostic_category": "..."
+}
+```
+
+### Diagnostic Logging Architecture:
+To identify the actual database error without exposing raw database error strings or customer personal information to external callers:
+1. **Server-Side Structured Logs:**
+   The full Supabase error object is recorded strictly in server-side logs:
+   - `operation`: Database operation being performed (`insert_petpooja_webhook_events` or `init_or_connect_supabase`).
+   - `order_reference`: The order reference ID.
+   - `db_error_code`: The database/PostgREST error code (e.g. `42501`, `PGRST204`, `42P01`).
+   - `db_error_message`: Sanitized error text.
+   - `db_error_details` and `db_error_hint`: Additional diagnostic hints from PostgreSQL/PostgREST.
+   - `http_status`: HTTP status code returned by PostgREST.
+2. **Public Diagnostic Response (Safe):**
+   The public HTTP response never exposes internal database schemas, table names, or raw SQL errors. It provides only:
+   - `error_code`: High-level code (e.g. `PGRST301`, `42501`, `PGRST204`).
+   - `diagnostic_category`: Safe classification enum:
+     - `AUTHENTICATION_FAILED` (`PGRST301` - JWT authentication or validation failure)
+     - `PERMISSION_DENIED` (`42501` - RLS policy violation or missing role permissions)
+     - `TABLE_OR_COLUMN_NOT_FOUND` (`42P01` / `PGRST204` - missing table or schema column mismatch)
+     - `DUPLICATE_KEY_VIOLATION` (`23505`)
+     - `NOT_NULL_VIOLATION` (`23502`)
+     - `DATABASE_INSERT_FAILED` (general fallback)
+     - `CONNECTION_FAILED` (network or client initialization failure)
+
+### Diagnostic Investigation Checklist:
+1. **Supabase Key Format (`sb_secret_`):**
+   Supabase uses the new `sb_secret_` format for secret/service keys alongside traditional JWT tokens. When inspecting server logs:
+   - If `error_code` is `PGRST301` (`AUTHENTICATION_FAILED`): The API gateway/PostgREST could not validate or parse the provided token format.
+   - If `error_code` is `42501` (`PERMISSION_DENIED`): The token is valid, but the resolved database role lacks table permissions or violates Row Level Security.
+2. **PostgreSQL / PostgREST Error Codes:**
+   - `PGRST301`: JWT authentication or token validation failure.
+   - `42501`: Permission denied / RLS violation.
+   - `42P01` / `PGRST204`: Table or column missing or not in the `public` schema.
+   - `23502`: A non-null column constraint was not satisfied.
+   - `23505`: Unique constraint violation.
+3. **No Unrestricted RLS Policies:**
+   Do not add open `true` RLS policies. The exact root cause must first be confirmed from the server log output.
+
+---
+
+## 9. Transition Plan to DigitalOcean VPS
 
 When migrating the application from Vercel to a self-hosted DigitalOcean VPS:
 
