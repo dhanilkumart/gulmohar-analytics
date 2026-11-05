@@ -1,6 +1,6 @@
 # Petpooja Integration Guide: Gulmohar Analytics
 
-This guide details the integration configuration, webhook sharing process, payload verification, testing steps, and the migration roadmap for Petpooja POS APIs.
+This guide details the integration configuration, webhook sharing process, Supabase persistence layer, payload verification, testing steps, and the migration roadmap for Petpooja POS APIs.
 
 ---
 
@@ -27,91 +27,64 @@ This guide details the integration configuration, webhook sharing process, paylo
 
 ---
 
-## 2. Information to Share with Petpooja
+## 2. Supabase Project Integration Architecture
 
-Petpooja requires a publicly accessible webhook endpoint to configure the **Global API** push notifications:
+To ensure auditability, raw data inspection, and seamless reconciliation before loading into production analytics tables, incoming Petpooja Global API requests are persisted in a staging events table in Supabase.
 
-1. **Webhook URL:** Provide your deployment URL:
-   `https://<your-domain>/api/webhooks/petpooja`
-2. **HTTP Method:** `POST`
-3. **Payload Format:** `application/json`
-4. **Authentication:**
-   - As per Petpooja Global API documentation: *"The webhook should be non-authenticated. If required, we can send a static token in the body of the payload in the key named 'token'."*
-   - Inform Petpooja whether you prefer **non-authenticated (initial demo)** or want to supply a static string token (e.g. `gulmohar_secure_wh_<random_string>`).
+### Environment Configuration:
+The server reads secrets exclusively through server-side environment variables:
+- `SUPABASE_URL`: The HTTPS URL of the Supabase project.
+- `SUPABASE_SECRET_KEY`: The Supabase secret key (Service Role Key) used server-side to bypass RLS policies for ingestion.
+- `PETPOOJA_WEBHOOK_TOKEN`: Optional static token agreed upon with Petpooja for webhook validation.
+
+> [!CAUTION]
+> Neither `SUPABASE_SECRET_KEY` nor `PETPOOJA_WEBHOOK_TOKEN` should ever be given a `NEXT_PUBLIC_` prefix or exposed to browser code. The Supabase client is enforced as server-only via `import "server-only"`.
+
+### Database Schema:
+Table: `public.petpooja_webhook_events` (with RLS enabled)
+
+| Column Name | Data Type | Constraints | Description |
+|---|---|---|---|
+| `id` | BIGINT | PRIMARY KEY, IDENTITY | Unique event auto-incrementing ID |
+| `event_type` | TEXT | | Extracted from payload `event` (e.g. `orderdetails`) |
+| `order_reference` | TEXT | | Extracted from `properties.Order.orderID` or `customer_invoice_id` |
+| `payload` | JSONB | NOT NULL | Complete, unmodified original JSON payload received from Petpooja |
+| `received_at` | TIMESTAMPTZ | | Timestamp when the request was ingested |
+| `processing_status` | TEXT | | Initial status set to `received` |
 
 ---
 
-## 3. Webhook Request & Payload Specifications
+## 3. Webhook-to-Database Processing Flow
 
-### Trigger Mechanism:
-The Petpooja POS triggers an event-driven HTTP POST request immediately upon pressing the **"SAVE AND PRINT"** CTA button for a bill.
-
-### Structure:
-```json
-{
-  "token": "optional-static-token",
-  "event": "orderdetails",
-  "properties": {
-    "Restaurant": {
-      "res_name": "Gulmohar Restaurant",
-      "address": "Ahmedabad",
-      "contact_information": "9876543210",
-      "restID": "outlet_mapping_id"
-    },
-    "Customer": {
-      "name": "Customer Name",
-      "address": "Customer Address",
-      "phone": "9876543210",
-      "gstin": ""
-    },
-    "Order": {
-      "orderID": 114,
-      "customer_invoice_id": "114",
-      "order_type": "Dine In",
-      "payment_type": "Cash",
-      "total": 1158,
-      "core_total": 1158,
-      "tax_total": 0,
-      "discount_total": 0,
-      "round_off": "0",
-      "created_on": "2026-03-15 14:30:00",
-      "order_from": "POS",
-      "status": "Success"
-    },
-    "Tax": [],
-    "Discount": [],
-    "OrderItem": [
-      {
-        "name": "Item Name",
-        "itemid": 123456,
-        "itemcode": "CODE1",
-        "price": 350,
-        "quantity": 1,
-        "total": 350
-      }
-    ]
-  }
-}
+```
+Incoming Webhook (Petpooja POS "SAVE AND PRINT")
+                       │
+                       ▼
+         [POST /api/webhooks/petpooja]
+                       │
+                       ├─► [1] Parse JSON (returns 400 if malformed)
+                       │
+                       ├─► [2] Validate Structure & Static Token (returns 400/401 if invalid)
+                       │
+                       ├─► [3] Extract event_type & order_reference
+                       │
+                       ├─► [4] Check Supabase Server Configuration (SUPABASE_URL & SUPABASE_SECRET_KEY)
+                       │
+                       ├─► [5] INSERT complete raw JSON into public.petpooja_webhook_events
+                       │       │
+                       │       ├─► On DB Error: Log error (no PII), return HTTP 500
+                       │       └─► On DB Success: Proceed
+                       │
+                       ├─► [6] Log sanitized diagnostic event (PII redacted)
+                       │
+                       ▼
+         Return HTTP 200 {"status": "success", "order_id": ..., "event_id": ...}
 ```
 
-### Webhook Response:
-On success (HTTP 200):
-```json
-{
-  "status": "success",
-  "message": "Order received successfully",
-  "order_id": 114
-}
-```
-
-On validation failure (HTTP 400 or HTTP 401):
-```json
-{
-  "status": "error",
-  "message": "Payload validation failed",
-  "details": ["Missing required field: 'properties.Restaurant.restID'"]
-}
-```
+### Key Integrity & Reliability Rules:
+1. **Zero Transformation Before Storage:** The entire unmodified JSON payload is stored directly in the `payload` JSONB column.
+2. **Persistence Guarantee:** The webhook returns HTTP 200 **only after** the row is successfully committed to Supabase. If the database is unreachable or the insert fails, an HTTP 500 is returned, prompting Petpooja's retry mechanism.
+3. **No Premature De-duplication:** All deliveries are recorded even if duplicated, preserving the full audit trail for future reconciliation.
 
 ---
 
@@ -119,50 +92,52 @@ On validation failure (HTTP 400 or HTTP 401):
 
 To protect customer privacy:
 - Full customer phone numbers, street addresses, and GSTIN numbers are **never** logged to server consoles or stored in plaintext logs.
-- The logger automatically redacts sensitive PII (`*` masking for phone and GSTIN, retains only first 3 letters of names).
-- Raw demo payloads are inspected in memory for validation only, and not written to disk or temporary directories.
+- The logger automatically redacts sensitive PII (`*` masking for phone and GSTIN, retaining only the first 3 letters of names).
+- Raw demo payloads are stored exclusively within the encrypted Supabase database instance.
 
 ---
 
 ## 5. How to Test the Webhook
 
-### Local Testing using cURL:
-Start the local Next.js dev server:
+### A. Health Check (GET)
+To verify endpoint accessibility and database configuration status:
 ```bash
-npm run dev
-```
-
-#### Health check test:
-```bash
-curl -X GET http://localhost:3000/api/webhooks/petpooja
+curl -X GET https://<your-domain>/api/webhooks/petpooja
 ```
 Expected response:
 ```json
-{"status":"ready","endpoint":"/api/webhooks/petpooja","service":"Gulmohar Analytics - Petpooja Global API Webhook",...}
+{
+  "status": "ready",
+  "endpoint": "/api/webhooks/petpooja",
+  "service": "Gulmohar Analytics - Petpooja Global API Webhook",
+  "database_configured": true,
+  "timestamp": "2026-11-05T18:20:00.000Z"
+}
 ```
 
-#### Test demo order push:
+### B. Synthetic Order Push (POST)
+Send a synthetic payload mirroring Petpooja's documentation:
 ```bash
-curl -X POST http://localhost:3000/api/webhooks/petpooja \
+curl -X POST https://<your-domain>/api/webhooks/petpooja \
   -H "Content-Type: application/json" \
   -d '{
     "token": "",
     "event": "orderdetails",
     "properties": {
       "Restaurant": {
-        "res_name": "Gulmohar Demo",
+        "res_name": "Gulmohar Restaurant",
         "address": "Ahmedabad",
         "contact_information": "9876543210",
-        "restID": "test_rest_01"
+        "restID": "cp81ghin"
       },
       "Customer": {
-        "name": "Demo Customer",
-        "address": "Local City",
+        "name": "Rohan",
+        "address": "Ahmedabad",
         "phone": "9876543210"
       },
       "Order": {
         "orderID": 101,
-        "customer_invoice_id": "INV-101",
+        "customer_invoice_id": "101",
         "delivery_charges": 0,
         "order_type": "Dine In",
         "payment_type": "Cash",
@@ -188,27 +163,35 @@ curl -X POST http://localhost:3000/api/webhooks/petpooja \
     }
   }'
 ```
-
 Expected response:
 ```json
 {
   "status": "success",
-  "message": "Order received successfully",
-  "order_id": 101
+  "message": "Order received and persisted successfully",
+  "order_id": 101,
+  "event_id": 1
 }
+```
+
+### C. Verify in Supabase
+Run the following SQL query in the Supabase SQL editor:
+```sql
+SELECT id, event_type, order_reference, processing_status, received_at, payload
+FROM public.petpooja_webhook_events
+ORDER BY id DESC
+LIMIT 5;
 ```
 
 ---
 
-## 6. Get Orders API Specification (Historical Pull)
+## 6. Information to Share with Petpooja
 
-### Model & Mechanics:
-- **HTTP Method:** `POST`
-- **T-1 Date Behavior:** 
-  To pull complete sales data for business day **March 15th (`2026-03-15`)**, pass `order_date`: `"2026-03-16"`. The query should be executed after business hours or as an overnight cron job.
-- **Pagination (`refId`):**
-  Initial call passes `"refId": ""`. Subsequent requests pass the last returned `refId` to paginate through dense order volumes.
-- **Order Status:** Orders include `"status": "Success"` or `"Cancelled"`, with corresponding cancellation reasons and waived amounts.
+1. **Webhook URL:** `https://<your-domain>/api/webhooks/petpooja`
+2. **HTTP Method:** `POST`
+3. **Payload Format:** `application/json`
+4. **Authentication:** 
+   - State whether the webhook is **non-authenticated** (default) or if a static string token should be sent in the `"token"` field.
+5. **Request:** Ask Petpooja to trigger a test push (demo order) to verify end-to-end receipt.
 
 ---
 
@@ -230,10 +213,11 @@ When migrating the application from Vercel to a self-hosted DigitalOcean VPS:
 
 1. **Zero Route Alteration:**
    The webhook route uses standard Next.js App Router route handlers with Node.js runtime compatibility. It functions identically inside a Docker container, PM2 process, or standalone Next.js server (`output: 'standalone'`).
-2. **Reverse Proxy (Nginx/Caddy):**
+2. **Environment Portability:**
+   Transfer `SUPABASE_URL` and `SUPABASE_SECRET_KEY` into the VPS `.env` or system environment.
+3. **Reverse Proxy (Nginx/Caddy):**
    Expose port 443 with an SSL certificate (Let's Encrypt / Certbot) and proxy `/api/webhooks/petpooja` to `localhost:3000`.
-3. **Persistent Logging & Ingestion:**
+4. **Persistent Logging & Ingestion:**
    In the VPS environment, logs can be forwarded to standard log sinks (e.g. systemd journal, Vector, or file log rotation).
-4. **Database Ingestion Phase:**
-   When the persistent database (PostgreSQL/TimescaleDB/MySQL) is approved and connected, the webhook receiver will simply insert into a staging queue or order table without changing the API contract with Petpooja.
-
+5. **Future Transformation Worker:**
+   A background worker or scheduled job can read `received` rows from `petpooja_webhook_events`, parse items, reconcile them against T-1 Get Orders pulls, and populate dashboard analytics models.

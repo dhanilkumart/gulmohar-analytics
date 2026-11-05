@@ -130,12 +130,22 @@ export interface PetpoojaWebhookSuccessResponse {
   status: "success";
   message: string;
   order_id?: string | number;
+  event_id?: number | string;
 }
 
 export interface PetpoojaWebhookErrorResponse {
   status: "error";
   message: string;
   details?: string[];
+}
+
+export interface PetpoojaWebhookEventRecord {
+  id?: number;
+  event_type: string;
+  order_reference: string;
+  payload: Record<string, unknown>;
+  received_at?: string;
+  processing_status: "received" | "processed" | "failed" | string;
 }
 
 // ============================================================================
