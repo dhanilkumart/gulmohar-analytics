@@ -45,8 +45,8 @@ async function getSalesPageData(range: DateRange) {
 }
 
 function buildSalesKpiComparisons(current: SalesSummary, previous: SalesSummary) {
-  const currentAov = current.orderCount > 0 ? current.netSales / current.orderCount : 0;
-  const previousAov = previous.orderCount > 0 ? previous.netSales / previous.orderCount : 0;
+  const currentAov = current.orderCount > 0 && current.netSales !== null ? current.netSales / current.orderCount : null;
+  const previousAov = previous.orderCount > 0 && previous.netSales !== null ? previous.netSales / previous.orderCount : null;
   return {
     netSales: comparePeriodValues(current.netSales, previous.netSales),
     orderCount: comparePeriodValues(current.orderCount, previous.orderCount),
@@ -73,7 +73,7 @@ export default async function SalesPage({
   const comparisonLabel = deltas ? "vs previous period" : undefined;
 
   const { netSales, orderCount, itemQuantitySold, totalDiscount } = current.salesSummary;
-  const aov = orderCount > 0 ? netSales / orderCount : 0;
+  const aov = orderCount > 0 && netSales !== null ? netSales / orderCount : null;
 
   // --- Sales/Orders trend: merge getSalesTrend + getOrdersTrend by period (same as Executive Dashboard) ---
   const ordersByPeriod = new Map(current.ordersTrend.map((point) => [point.period, point.orderCount]));

@@ -9,16 +9,16 @@ import "server-only";
  * reading JSON files directly. See docs/architecture.md.
  */
 export { getRestaurant } from "./restaurant";
-export { getDepartments } from "./departments";
-export { getCategories } from "./categories";
-export { getProducts } from "./products";
+export { getDepartments, type DepartmentFilterOptions } from "./departments";
+export { getCategories, type CategoryFilterOptions } from "./categories";
+export { getProducts, type ProductFilterOptions } from "./products";
 export { getIngredients } from "./ingredients";
 export { getRecipes } from "./recipes";
 export { getEmployees } from "./employees";
-export { getSales } from "./sales";
+export { getSales, type SalesFilterOptions } from "./sales";
 export { getSaleItems } from "./sale-items";
 export { getPreparation } from "./preparation";
-export { getWastage } from "./wastage";
-export { getBreakage } from "./breakage";
+export { getWastage, type WastageFilterOptions } from "./wastage";
+export { getBreakage, type BreakageFilterOptions } from "./breakage";
 export { getAttendance } from "./attendance";
 export { getOperatingCosts } from "./operating-costs";

@@ -17,17 +17,25 @@ import "server-only";
  * re-implementing it.
  */
 export interface PeriodComparison {
-  current: number;
-  previous: number;
-  difference: number;
+  current: number | null;
+  previous: number | null;
+  difference: number | null;
   /**
-   * (current - previous) / previous * 100. `null` when `previous` is 0 —
-   * a percentage change from zero is undefined, not 0% or Infinity.
+   * (current - previous) / previous * 100. `null` when `previous` is 0 or null,
+   * or when `current` is null — percentage change is undefined when values are unknown.
    */
   percentageChange: number | null;
 }
 
-export function comparePeriodValues(current: number, previous: number): PeriodComparison {
+export function comparePeriodValues(current: number | null, previous: number | null): PeriodComparison {
+  if (current === null || previous === null) {
+    return {
+      current,
+      previous,
+      difference: null,
+      percentageChange: null,
+    };
+  }
   const difference = current - previous;
   return {
     current,

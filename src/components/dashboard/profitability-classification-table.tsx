@@ -73,7 +73,7 @@ export function ProfitabilityClassificationTable({
       align: "right",
       sortValue: (r) => r.marginPercentage,
       cell: (r) => (
-        <StatusBadge tone={r.grossMargin < 0 ? "negative" : "positive"}>
+        <StatusBadge tone={r.grossMargin !== null && r.grossMargin < 0 ? "negative" : "positive"}>
           {pct(r.marginPercentage, 1)}
         </StatusBadge>
       ),

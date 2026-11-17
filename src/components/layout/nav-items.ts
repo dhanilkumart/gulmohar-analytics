@@ -7,6 +7,7 @@ import {
   Users,
   GaugeCircle,
   FileBarChart2,
+  Database,
 } from "lucide-react";
 
 export interface NavItem {
@@ -46,5 +47,9 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Reports",
     items: [{ label: "Reports", href: "/dashboard/reports", icon: FileBarChart2 }],
+  },
+  {
+    label: "Administration",
+    items: [{ label: "Master Data", href: "/dashboard/master-data", icon: Database }],
   },
 ];

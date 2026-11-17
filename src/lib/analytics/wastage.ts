@@ -13,13 +13,44 @@ import {
 import { getPreparationVsSoldVsWasted } from "./preparation";
 
 export async function getWastageInRange(range: DateRange): Promise<Wastage[]> {
-  const wastage = await getWastage();
+  const wastage = await getWastage({
+    startDate: range.from,
+    endDate: range.to,
+  });
   return filterByDateRange(wastage, range, (row) => row.date);
 }
 
-/** Wastage cost = wasted quantity x product food cost, pre-computed on each wastage.json row. */
+export interface WastageCostSummary {
+  totalCost: number;
+  isComplete: boolean;
+  unknownCostCount: number;
+}
+
+/**
+ * Returns summary of wastage cost, tracking whether all records had known costs.
+ */
+export function getWastageCostSummary(wastage: Wastage[]): WastageCostSummary {
+  let totalCost = 0;
+  let unknownCostCount = 0;
+  for (const row of wastage) {
+    if (row.estimated_cost != null) {
+      totalCost += row.estimated_cost;
+    } else {
+      unknownCostCount += 1;
+    }
+  }
+  return {
+    totalCost,
+    isComplete: unknownCostCount === 0,
+    unknownCostCount,
+  };
+}
+
+/** Wastage cost = wasted quantity x product food cost, pre-computed on each wastage.json row.
+ * Handles nullable estimated_cost safely without producing NaN.
+ */
 export function getWastageCost(wastage: Wastage[]): number {
-  return wastage.reduce((sum, row) => sum + row.estimated_cost, 0);
+  return wastage.reduce((sum, row) => sum + (row.estimated_cost != null ? row.estimated_cost : 0), 0);
 }
 
 export interface WastageTrendPoint {
@@ -41,7 +72,7 @@ export async function getWastageTrend(
     wastageInRange,
     granularity,
     (row) => row.date,
-    (row) => row.estimated_cost
+    (row) => (row.estimated_cost != null ? row.estimated_cost : 0)
   );
   return enumeratePeriods(range, granularity).map((period) => ({
     period,
@@ -76,7 +107,8 @@ export async function getWastageByProduct(range: DateRange): Promise<WastageByPr
 
   const costByProduct = new Map<string, number>();
   for (const row of wastageInRange) {
-    costByProduct.set(row.product_id, (costByProduct.get(row.product_id) ?? 0) + row.estimated_cost);
+    const cost = row.estimated_cost != null ? row.estimated_cost : 0;
+    costByProduct.set(row.product_id, (costByProduct.get(row.product_id) ?? 0) + cost);
   }
 
   return Array.from(costByProduct.entries()).map(([productId, wastageCost]) => {
@@ -109,7 +141,7 @@ export async function getWastageByReason(range: DateRange): Promise<WastageByRea
   for (const row of wastageInRange) {
     const existing = byReason.get(row.reason) ?? { wastedQuantity: 0, wastageCost: 0 };
     existing.wastedQuantity += row.quantity;
-    existing.wastageCost += row.estimated_cost;
+    existing.wastageCost += row.estimated_cost != null ? row.estimated_cost : 0;
     byReason.set(row.reason, existing);
   }
 

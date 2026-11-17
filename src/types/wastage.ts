@@ -11,6 +11,6 @@ export interface Wastage {
   quantity: number;
   unit: string;
   reason: string;
-  estimated_cost: number;
+  estimated_cost: number | null;
   department_id: string;
 }

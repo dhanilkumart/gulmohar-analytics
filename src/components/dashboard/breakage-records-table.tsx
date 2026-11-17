@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SectionHeader, StatusBadge } from "@/components/dashboard/ui-kit";
@@ -17,56 +18,151 @@ export interface DepartmentOption {
   name: string;
 }
 
-/**
- * A locally-added breakage record — V1 prototype UI state only. Never
- * written to `mock_data/`, never affects the analytics fetched by the
- * server page, and disappears on refresh. See the "analytics vs. local
- * CRUD boundary" note in `src/app/dashboard/breakage/page.tsx`. Mirrors
- * `LocalWastageRecord` from Step 8.
- */
-export interface LocalBreakageRecord {
+export interface BreakageRecordItem {
   id: string;
   date: string;
   departmentId: string;
   departmentName: string;
   item: string;
   quantity: number;
-  cost: number;
+  cost: number | null;
+  unitCost?: number | null;
   reason: string;
+  notes?: string;
+  outletCode?: string;
+  recordedBy?: string;
 }
 
-/**
- * Local-only Add/Edit/View/Delete workflow for breakage records, adapted
- * from the Lovable UI's Breakage route and reusing the shared
- * `RecordActions`/`RecordDetailDialog`/`ConfirmDialog` pieces first built
- * for Wastage in Step 8.
- *
- * Deliberately starts with an EMPTY record list rather than Lovable's
- * fabricated seed rows — this project's data layer only has real
- * `breakage.json` rows (already shown, read-only, in `BreakageDetailTable`
- * above); inventing plausible-looking "example" local records here would
- * blur the line between real and prototype data.
- *
- * No database/API/localStorage — `records` is plain `useState`, lost on
- * refresh, exactly as intended for a V1 prototype. The callback/interface
- * shape (`onSave`, `onOpenChange`) is kept identical to Wastage's so a
- * future persistence layer could be wired in without reshaping the UI.
- */
-export function BreakageRecordsSection({ departments }: { departments: DepartmentOption[] }) {
-  const [records, setRecords] = useState<LocalBreakageRecord[]>([]);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<LocalBreakageRecord | null>(null);
-  const [viewing, setViewing] = useState<LocalBreakageRecord | null>(null);
-  const [deleting, setDeleting] = useState<LocalBreakageRecord | null>(null);
+export type LocalBreakageRecord = BreakageRecordItem;
 
-  const saveRecord = (record: LocalBreakageRecord) => {
-    const isUpdate = records.some((item) => item.id === record.id);
-    setRecords((current) => (isUpdate ? current.map((item) => (item.id === record.id ? record : item)) : [record, ...current]));
-    setEditing(null);
-    toast.success(isUpdate ? "Breakage record updated (local prototype only)" : "Breakage record added (local prototype only)");
+export function BreakageRecordsSection({ departments }: { departments: DepartmentOption[] }) {
+  const searchParams = useSearchParams();
+  const currentOutletId = searchParams.get("outletId");
+
+  const [records, setRecords] = useState<BreakageRecordItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<BreakageRecordItem | null>(null);
+  const [viewing, setViewing] = useState<BreakageRecordItem | null>(null);
+  const [deleting, setDeleting] = useState<BreakageRecordItem | null>(null);
+
+  // Fetch real records from PostgreSQL API
+  const fetchRecords = useCallback(async () => {
+    try {
+      setLoading(true);
+      const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
+      const res = await fetch(`/api/dashboard/breakage${query}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.records)) {
+          setRecords(json.records);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch breakage records:", err);
+      toast.error("Failed to load records from database");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentOutletId]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      try {
+        setLoading(true);
+        const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
+        const res = await fetch(`/api/dashboard/breakage${query}`);
+        if (res.ok && !ignore) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.records)) {
+            setRecords(json.records);
+          }
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error("Failed to fetch breakage records:", err);
+          toast.error("Failed to load records from database");
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    load();
+    return () => {
+      ignore = true;
+    };
+  }, [currentOutletId]);
+
+  const saveRecord = async (formRecord: BreakageRecordItem) => {
+    const isUpdate = Boolean(editing?.id);
+    try {
+      const method = isUpdate ? "PUT" : "POST";
+      const payload = isUpdate
+        ? {
+            id: editing?.id,
+            departmentId: formRecord.departmentId,
+            item: formRecord.item,
+            quantity: formRecord.quantity,
+            cost: formRecord.cost,
+            reason: formRecord.reason,
+          }
+        : {
+            outletId: currentOutletId || undefined,
+            departmentId: formRecord.departmentId,
+            item: formRecord.item,
+            quantity: formRecord.quantity,
+            cost: formRecord.cost,
+            reason: formRecord.reason,
+            date: formRecord.date,
+          };
+
+      const res = await fetch("/api/dashboard/breakage", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save breakage record");
+      }
+
+      toast.success(isUpdate ? "Breakage record updated in database" : "Breakage record saved to database");
+      setEditing(null);
+      setFormOpen(false);
+      fetchRecords();
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast.error(error.message || "Failed to save breakage record");
+    }
   };
 
-  const columns: Column<LocalBreakageRecord>[] = [
+  const deleteRecord = async () => {
+    if (!deleting) return;
+    try {
+      const res = await fetch(`/api/dashboard/breakage?id=${encodeURIComponent(deleting.id)}`, {
+        method: "DELETE",
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete record");
+      }
+
+      toast.success("Breakage record deleted from database");
+      setDeleting(null);
+      fetchRecords();
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast.error(error.message || "Failed to delete breakage record");
+    }
+  };
+
+  const columns: Column<BreakageRecordItem>[] = [
     { key: "date", header: "Date", sortValue: (r) => r.date, cell: (r) => <span className="num">{r.date}</span> },
     {
       key: "item",
@@ -85,8 +181,12 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
       key: "cost",
       header: "Cost",
       align: "right",
-      sortValue: (r) => r.cost,
-      cell: (r) => <span className="font-semibold">{inr(r.cost)}</span>,
+      sortValue: (r) => r.cost ?? -1,
+      cell: (r) => (
+        <span className="font-semibold">
+          {r.cost !== null && r.cost !== undefined ? inr(r.cost) : <span className="text-muted-foreground">—</span>}
+        </span>
+      ),
     },
     {
       key: "reason",
@@ -115,8 +215,8 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
   return (
     <section className="surface-card p-5">
       <SectionHeader
-        title="Breakage Records (Local Prototype)"
-        description="Manually recorded breakage entries for this session only — not persisted, and not reflected in the analytics above."
+        title="Breakage Records (PostgreSQL Database)"
+        description="Active tableware breakage records persisted in PostgreSQL for your authorized outlet scope."
         action={
           <Button
             onClick={() => {
@@ -144,7 +244,11 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
               match: (row, value) => row.departmentName === value,
             },
           ]}
-          emptyMessage="No local breakage records yet. Use “Add Breakage” to record one for this session."
+          emptyMessage={
+            loading
+              ? "Loading database records..."
+              : "No breakage records found for this outlet. Use “Add Breakage” to record one."
+          }
         />
       </div>
 
@@ -163,14 +267,17 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
         open={!!viewing}
         onOpenChange={(open) => !open && setViewing(null)}
         title={viewing?.item ?? "Breakage record"}
-        description="Local prototype breakage record — not persisted."
+        description="Database breakage record details."
         fields={
           viewing
             ? [
                 { label: "Date", value: viewing.date },
+                { label: "Item", value: viewing.item },
                 { label: "Department", value: viewing.departmentName },
                 { label: "Quantity", value: num(viewing.quantity) },
-                { label: "Cost", value: inr(viewing.cost) },
+                { label: "Cost", value: viewing.cost !== null && viewing.cost !== undefined ? inr(viewing.cost) : "—" },
+                { label: "Outlet", value: viewing.outletCode ?? "—" },
+                { label: "Recorded By", value: viewing.recordedBy ?? "—" },
                 { label: "Reason / Notes", value: viewing.reason },
               ]
             : []
@@ -181,14 +288,9 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title="Delete this breakage record?"
-        description="This removes the record from the current prototype session only."
+        description="This action deletes the record permanently from the PostgreSQL database."
         confirmLabel="Delete Breakage"
-        onConfirm={() => {
-          if (!deleting) return;
-          setRecords((current) => current.filter((row) => row.id !== deleting.id));
-          setDeleting(null);
-          toast.success("Breakage record deleted (local prototype only)");
-        }}
+        onConfirm={deleteRecord}
       />
     </section>
   );

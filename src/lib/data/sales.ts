@@ -1,17 +1,108 @@
 import "server-only";
 
 import type { Sale } from "@/types";
-import { createCachedLoader } from "./reader";
+import { prisma } from "@/lib/db/client";
+import { createCachedLoader, getDataSourceMode } from "./reader";
+
+/**
+ * Filter options for reading sales from PostgreSQL or mock data.
+ */
+export interface SalesFilterOptions {
+  outletId?: string;
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;   // YYYY-MM-DD
+}
 
 /**
  * sales.json has ~179k rows (~30MB raw). This is loaded and cached
- * in-memory once per server process — it must only ever be called from
- * server-side code (Server Components, Route Handlers, or the analytics
- * layer), never passed down into a Client Component. See
- * docs/architecture.md for why.
+ * in-memory once per server process in mock mode.
  */
-const loadSales = createCachedLoader<Sale[]>("sales.json");
+const loadSalesMock = createCachedLoader<Sale[]>("sales.json");
 
-export async function getSales(): Promise<Sale[]> {
-  return loadSales();
+/**
+ * Loads sales from PostgreSQL (when DATA_SOURCE=database) or from mock data (default).
+ *
+ * Business Rules:
+ * - Only orders with status = 'Success' are returned.
+ * - Cancelled orders are strictly excluded from revenue/order counts.
+ * - In database mode, missing financial values (core_total, discount_total, total_amount)
+ *   are preserved without inventing artificial numbers.
+ * - If database access fails, a clear error is thrown (never silent mock fallback).
+ */
+export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
+  const mode = getDataSourceMode();
+
+  if (mode === "mock") {
+    let sales = loadSalesMock();
+    if (options?.startDate || options?.endDate) {
+      sales = sales.filter((sale) => {
+        if (options.startDate && sale.date < options.startDate) return false;
+        if (options.endDate && sale.date > options.endDate) return false;
+        return true;
+      });
+    }
+    return sales;
+  }
+
+  // Database mode: Read from PostgreSQL via Prisma
+  try {
+    const whereClause: {
+      status: string;
+      outletId?: string;
+      orderDate?: {
+        gte?: Date;
+        lte?: Date;
+      };
+    } = {
+      status: "Success",
+    };
+
+    if (options?.outletId && options.outletId !== "all") {
+      whereClause.outletId = options.outletId;
+    }
+
+    if (options?.startDate || options?.endDate) {
+      whereClause.orderDate = {};
+      if (options.startDate) {
+        whereClause.orderDate.gte = new Date(`${options.startDate}T00:00:00.000Z`);
+      }
+      if (options.endDate) {
+        whereClause.orderDate.lte = new Date(`${options.endDate}T23:59:59.999Z`);
+      }
+    }
+
+    const orders = await prisma.salesOrder.findMany({
+      where: whereClause,
+      orderBy: { orderedAt: "asc" },
+    });
+
+    return orders.map((order) => {
+      // Format date as YYYY-MM-DD
+      const dateStr = order.orderDate.toISOString().split("T")[0];
+      // Format time as HH:MM
+      const timeStr = order.orderedAt.toISOString().substring(11, 16);
+
+      const grossAmount = order.coreTotal !== null ? Number(order.coreTotal) : null;
+      const discount = order.discountTotal !== null ? Number(order.discountTotal) : null;
+      // Per business rules: Net sales = gross - discount. If totalAmount exists, use it;
+      // otherwise compute gross - discount only if both are known.
+      const netAmount = order.totalAmount !== null
+        ? Number(order.totalAmount)
+        : (grossAmount !== null && discount !== null ? grossAmount - discount : null);
+
+      return {
+        bill_id: order.petpoojaOrderId,
+        date: dateStr,
+        time: timeStr,
+        order_type: order.orderType,
+        gross_amount: grossAmount,
+        discount: discount,
+        net_amount: netAmount,
+        payment_method: "Other", // Payment breakdown is deferred; placeholder matches Sale interface string
+      };
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[DATA_SOURCE=database] Failed to load sales from PostgreSQL: ${message}`);
+  }
 }

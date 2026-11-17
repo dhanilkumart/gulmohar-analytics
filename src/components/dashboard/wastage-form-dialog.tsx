@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -88,7 +88,6 @@ export function WastageFormDialog({
     control,
     register,
     handleSubmit,
-    watch,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<WastageFormValues>({ resolver: zodResolver(wastageFormSchema), defaultValues: emptyDefaults });
@@ -106,11 +105,11 @@ export function WastageFormDialog({
           }
         : emptyDefaults
     );
-    setSubmitError("");
   }, [initial, open, reset]);
 
-  const selectedProductId = watch("productId");
-  const wastedQuantity = Number(watch("wastedQuantity")) || 0;
+  const selectedProductId = useWatch({ control, name: "productId" });
+  const rawWastedQuantity = useWatch({ control, name: "wastedQuantity" });
+  const wastedQuantity = Number(rawWastedQuantity) || 0;
   const selectedProduct = useMemo(
     () => trackedProducts.find((p) => p.productId === selectedProductId),
     [trackedProducts, selectedProductId]
@@ -124,8 +123,9 @@ export function WastageFormDialog({
       setSubmitError("Select a valid tracked preparation item.");
       return;
     }
+    const recordId = initial?.id ?? `local-wastage-${values.date}-${values.productId}`;
     onSave({
-      id: initial?.id ?? `local-wastage-${Date.now()}`,
+      id: recordId,
       date: values.date,
       productId: product.productId,
       productName: product.name,

@@ -6,7 +6,8 @@
  * way instead of ad-hoc `toLocaleString()` calls scattered per component.
  */
 
-export const inr = (value: number, opts: { compact?: boolean; decimals?: number } = {}) => {
+export const inr = (value: number | null | undefined, opts: { compact?: boolean; decimals?: number } = {}) => {
+  if (value === null || value === undefined) return "—";
   const { compact = false, decimals = 0 } = opts;
   if (compact) {
     const abs = Math.abs(value);
@@ -20,13 +21,20 @@ export const inr = (value: number, opts: { compact?: boolean; decimals?: number 
   })}`;
 };
 
-export const num = (value: number, decimals = 0) =>
-  value.toLocaleString("en-IN", {
+export const num = (value: number | null | undefined, decimals = 0) => {
+  if (value === null || value === undefined) return "—";
+  return value.toLocaleString("en-IN", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+};
 
-export const pct = (value: number, decimals = 1) => `${value.toFixed(decimals)}%`;
+export const pct = (value: number | null | undefined, decimals = 1) => {
+  if (value === null || value === undefined) return "—";
+  return `${value.toFixed(decimals)}%`;
+};
 
-export const signedPct = (value: number, decimals = 1) =>
-  `${value > 0 ? "+" : ""}${value.toFixed(decimals)}%`;
+export const signedPct = (value: number | null | undefined, decimals = 1) => {
+  if (value === null || value === undefined) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(decimals)}%`;
+};

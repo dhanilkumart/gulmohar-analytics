@@ -52,7 +52,7 @@ export function ReportComparisonTable({ rows }: { rows: ComparisonRow[] }) {
           </thead>
           <tbody>
             {rows.map((row) => {
-              const fmt = (value: number) => (row.money ? inr(value) : num(value));
+              const fmt = (value: number | null) => (row.money ? inr(value) : num(value));
               const change = row.comparison.percentageChange;
               const favorable = change === null ? null : row.invert ? change <= 0 : change >= 0;
               return (

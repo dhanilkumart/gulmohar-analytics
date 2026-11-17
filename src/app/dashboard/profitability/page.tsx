@@ -36,7 +36,10 @@ async function getProfitabilityPageData(range: DateRange) {
   ]);
 
   const revenue = productProfitability.reduce((sum, p) => sum + p.revenue, 0);
-  const foodCost = productProfitability.reduce((sum, p) => sum + p.foodCost, 0);
+  const anyUncosted = productProfitability.some((p) => p.foodCost === null);
+  const foodCost = anyUncosted
+    ? null
+    : productProfitability.reduce((sum, p) => sum + (p.foodCost ?? 0), 0);
   const grossMargin = getGrossFoodMargin(revenue, foodCost);
 
   return { productProfitability, categories, revenue, foodCost, grossMargin };
@@ -97,7 +100,10 @@ export default async function ProfitabilityPage({
     : null;
   const comparisonLabel = deltas ? "vs previous period" : undefined;
 
-  const marginPercentage = current.revenue > 0 ? (current.grossMargin / current.revenue) * 100 : 0;
+  const marginPercentage =
+    current.grossMargin !== null && current.revenue > 0
+      ? (current.grossMargin / current.revenue) * 100
+      : null;
 
   const { lossMaking, highSalesLowMargin, lowSalesLowMargin, classificationById } = classifyProducts(
     current.productProfitability

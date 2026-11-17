@@ -12,16 +12,21 @@ import "server-only";
  * calling it "estimated operational contribution".
  */
 export interface OperationalContributionInputs {
-  netSales: number;
-  foodCost: number;
+  netSales: number | null;
+  foodCost: number | null;
   wastageCost: number;
   breakageCost: number;
   operatingCosts: number;
+  isWastageCostComplete?: boolean;
+  isBreakageCostComplete?: boolean;
 }
 
 export function getEstimatedOperationalContribution(
   inputs: OperationalContributionInputs
-): number {
-  const { netSales, foodCost, wastageCost, breakageCost, operatingCosts } = inputs;
+): number | null {
+  const { netSales, foodCost, wastageCost, breakageCost, operatingCosts, isWastageCostComplete = true, isBreakageCostComplete = true } = inputs;
+  if (netSales === null || foodCost === null || !isWastageCostComplete || !isBreakageCostComplete) {
+    return null;
+  }
   return netSales - foodCost - wastageCost - breakageCost - operatingCosts;
 }

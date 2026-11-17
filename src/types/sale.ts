@@ -11,8 +11,8 @@ export interface Sale {
   date: string;
   time: string;
   order_type: string;
-  gross_amount: number;
-  discount: number;
-  net_amount: number;
+  gross_amount: number | null;
+  discount: number | null;
+  net_amount: number | null;
   payment_method: string;
 }

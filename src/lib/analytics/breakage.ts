@@ -5,12 +5,41 @@ import type { Breakage } from "@/types";
 import { filterByDateRange, type DateRange } from "./date-range";
 
 export async function getBreakageInRange(range: DateRange): Promise<Breakage[]> {
-  const breakage = await getBreakage();
+  const breakage = await getBreakage({
+    startDate: range.from,
+    endDate: range.to,
+  });
   return filterByDateRange(breakage, range, (row) => row.date);
 }
 
+export interface BreakageCostSummary {
+  totalCost: number;
+  isComplete: boolean;
+  unknownCostCount: number;
+}
+
+/**
+ * Returns summary of breakage cost, tracking whether all records had known costs.
+ */
+export function getBreakageCostSummary(breakage: Breakage[]): BreakageCostSummary {
+  let totalCost = 0;
+  let unknownCostCount = 0;
+  for (const row of breakage) {
+    if (row.estimated_cost != null) {
+      totalCost += row.estimated_cost;
+    } else {
+      unknownCostCount += 1;
+    }
+  }
+  return {
+    totalCost,
+    isComplete: unknownCostCount === 0,
+    unknownCostCount,
+  };
+}
+
 export function getBreakageCost(breakage: Breakage[]): number {
-  return breakage.reduce((sum, row) => sum + row.estimated_cost, 0);
+  return breakage.reduce((sum, row) => sum + (row.estimated_cost != null ? row.estimated_cost : 0), 0);
 }
 
 export interface BreakageByDepartment {
@@ -32,7 +61,7 @@ export async function getBreakageByDepartment(range: DateRange): Promise<Breakag
   for (const row of breakageInRange) {
     const existing = byDepartment.get(row.department_id) ?? { eventCount: 0, breakageCost: 0 };
     existing.eventCount += 1;
-    existing.breakageCost += row.estimated_cost;
+    existing.breakageCost += row.estimated_cost != null ? row.estimated_cost : 0;
     byDepartment.set(row.department_id, existing);
   }
 
@@ -60,7 +89,7 @@ export async function getBreakageByItem(range: DateRange): Promise<BreakageByIte
     const existing = byItem.get(row.item) ?? { eventCount: 0, quantity: 0, breakageCost: 0 };
     existing.eventCount += 1;
     existing.quantity += row.quantity;
-    existing.breakageCost += row.estimated_cost;
+    existing.breakageCost += row.estimated_cost != null ? row.estimated_cost : 0;
     byItem.set(row.item, existing);
   }
 

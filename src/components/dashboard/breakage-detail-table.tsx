@@ -10,7 +10,7 @@ export interface BreakageDetailRow {
   departmentName: string;
   item: string;
   quantity: number;
-  cost: number;
+  cost: number | null;
   reason: string;
 }
 

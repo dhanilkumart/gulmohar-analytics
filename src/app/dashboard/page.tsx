@@ -129,9 +129,9 @@ export default async function DashboardOverviewPage({
   const comparisonLabel = deltas ? "vs previous period" : undefined;
 
   const { netSales, foodCost, contribution } = current.contribution;
-  const foodCostPct = netSales > 0 ? (foodCost / netSales) * 100 : 0;
-  const wastagePctOfSales = netSales > 0 ? (current.wastageCost / netSales) * 100 : 0;
-  const contributionPct = netSales > 0 ? (contribution / netSales) * 100 : 0;
+  const foodCostPct = netSales !== null && foodCost !== null && netSales > 0 ? (foodCost / netSales) * 100 : null;
+  const wastagePctOfSales = netSales !== null && netSales > 0 ? (current.wastageCost / netSales) * 100 : null;
+  const contributionPct = netSales !== null && contribution !== null && netSales > 0 ? (contribution / netSales) * 100 : null;
 
   // --- Sales Performance chart: merge getSalesTrend + getOrdersTrend by period ---
   const ordersByPeriod = new Map(current.ordersTrend.map((point) => [point.period, point.orderCount]));

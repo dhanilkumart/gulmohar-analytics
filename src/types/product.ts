@@ -13,9 +13,9 @@ export interface Product {
   name: string;
   category_id: string;
   selling_price: number;
-  food_cost: number;
+  food_cost: number | null;
   unit: string;
   active: boolean;
-  gross_margin_per_unit: number;
+  gross_margin_per_unit: number | null;
   preparation_type: PreparationType;
 }

@@ -63,7 +63,10 @@ async function getReportsPageData(range: DateRange) {
   const attendance = getAttendanceSummary(attendanceInRange);
 
   const grossFoodMargin = getGrossFoodMargin(contribution.netSales, contribution.foodCost);
-  const marginPercentage = contribution.netSales > 0 ? (grossFoodMargin / contribution.netSales) * 100 : 0;
+  const marginPercentage =
+    contribution.netSales !== null && grossFoodMargin !== null && contribution.netSales > 0
+      ? (grossFoodMargin / contribution.netSales) * 100
+      : null;
 
   return {
     contribution,
@@ -140,25 +143,27 @@ export default async function ReportsPage({
       ]
     : [];
 
+  const formatVal = (val: number | null, decimals = 2) => (val !== null ? val.toFixed(decimals) : "Incomplete");
+
   const csvRows: ReportCsvRow[] = [
     { label: "Report Period", value: `${range.from} to ${range.to}` },
-    { label: "Net Sales", value: current.contribution.netSales.toFixed(2) },
+    { label: "Net Sales", value: formatVal(current.contribution.netSales) },
     { label: "Orders", value: String(current.orderCount) },
-    { label: "Food Cost", value: current.contribution.foodCost.toFixed(2) },
-    { label: "Gross Food Margin", value: current.grossFoodMargin.toFixed(2) },
-    { label: "Margin %", value: `${current.marginPercentage.toFixed(2)}%` },
+    { label: "Food Cost", value: formatVal(current.contribution.foodCost) },
+    { label: "Gross Food Margin", value: formatVal(current.grossFoodMargin) },
+    { label: "Margin %", value: current.marginPercentage !== null ? `${current.marginPercentage.toFixed(2)}%` : "Incomplete" },
     { label: "Wastage Quantity", value: String(current.wastedQuantity) },
-    { label: "Wastage Cost", value: current.contribution.wastageCost.toFixed(2) },
+    { label: "Wastage Cost", value: current.contribution.isWastageCostComplete ? current.contribution.wastageCost.toFixed(2) : `Incomplete (${current.contribution.wastageCost.toFixed(2)} known)` },
     { label: "Wastage %", value: `${current.wastagePercentage.toFixed(2)}%` },
-    { label: "Breakage Cost", value: current.contribution.breakageCost.toFixed(2) },
+    { label: "Breakage Cost", value: current.contribution.isBreakageCostComplete ? current.contribution.breakageCost.toFixed(2) : `Incomplete (${current.contribution.breakageCost.toFixed(2)} known)` },
     { label: "Breakage Events", value: String(current.breakageEventCount) },
-    { label: "Average Cost per Breakage Event", value: current.averageBreakageCostPerEvent.toFixed(2) },
+    { label: "Average Cost per Breakage Event", value: current.contribution.isBreakageCostComplete ? current.averageBreakageCostPerEvent.toFixed(2) : "Incomplete" },
     { label: "Present", value: String(current.attendance.presentCount) },
     { label: "Absent", value: String(current.attendance.absentCount) },
     { label: "Leave", value: String(current.attendance.leaveCount) },
     { label: "Attendance %", value: `${current.attendance.attendanceRate.toFixed(2)}%` },
     { label: "Operating Costs", value: current.contribution.operatingCosts.toFixed(2) },
-    { label: "Estimated Operational Contribution", value: current.contribution.contribution.toFixed(2) },
+    { label: "Estimated Operational Contribution", value: formatVal(current.contribution.contribution) },
   ];
 
   return (

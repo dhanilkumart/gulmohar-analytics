@@ -14,15 +14,20 @@ import {
 export interface SalesSummary {
   range: DateRange;
   orderCount: number;
-  grossSales: number;
-  netSales: number;
-  totalDiscount: number;
+  grossSales: number | null;
+  netSales: number | null;
+  totalDiscount: number | null;
   itemQuantitySold: number;
+  isComplete: boolean;
+  incompleteSalesCount: number;
 }
 
 /** Sales (bill headers) within a date range. */
 export async function getSalesInRange(range: DateRange): Promise<Sale[]> {
-  const sales = await getSales();
+  const sales = await getSales({
+    startDate: range.from,
+    endDate: range.to,
+  });
   return filterByDateRange(sales, range, (sale) => sale.date);
 }
 
@@ -35,21 +40,42 @@ export async function getSalesInRange(range: DateRange): Promise<Sale[]> {
 export async function getSaleItemsInRange(range: DateRange): Promise<SaleItem[]> {
   const salesInRange = await getSalesInRange(range);
   const billIdsInRange = new Set(salesInRange.map((sale) => sale.bill_id));
-  const saleItems = await getSaleItems();
+  const saleItems = await getSaleItems({
+    startDate: range.from,
+    endDate: range.to,
+  });
   return saleItems.filter((item) => billIdsInRange.has(item.bill_id));
 }
 
-export function getGrossSales(sales: Sale[]): number {
-  return sales.reduce((sum, sale) => sum + sale.gross_amount, 0);
+export function getGrossSales(sales: Sale[]): number | null {
+  let sum = 0;
+  for (const sale of sales) {
+    if (sale.gross_amount === null) return null;
+    sum += sale.gross_amount;
+  }
+  return sum;
 }
 
-/** Net sales = gross - discount (business-rules.md). */
-export function getNetSales(sales: Sale[]): number {
-  return sales.reduce((sum, sale) => sum + sale.net_amount, 0);
+/** Net sales = gross - discount (business-rules.md).
+ * If any sale in the collection has an unknown net_amount, returns null
+ * to prevent silent undercounting.
+ */
+export function getNetSales(sales: Sale[]): number | null {
+  let sum = 0;
+  for (const sale of sales) {
+    if (sale.net_amount === null) return null;
+    sum += sale.net_amount;
+  }
+  return sum;
 }
 
-export function getTotalDiscount(sales: Sale[]): number {
-  return sales.reduce((sum, sale) => sum + sale.discount, 0);
+export function getTotalDiscount(sales: Sale[]): number | null {
+  let sum = 0;
+  for (const sale of sales) {
+    if (sale.discount === null) return null;
+    sum += sale.discount;
+  }
+  return sum;
 }
 
 export function getOrderCount(sales: Sale[]): number {
@@ -71,6 +97,10 @@ export async function getSalesSummary(range: DateRange): Promise<SalesSummary> {
     getSaleItemsInRange(range),
   ]);
 
+  const incompleteSalesCount = salesInRange.filter(
+    (s) => s.gross_amount === null || s.discount === null || s.net_amount === null
+  ).length;
+
   return {
     range,
     orderCount: getOrderCount(salesInRange),
@@ -78,6 +108,8 @@ export async function getSalesSummary(range: DateRange): Promise<SalesSummary> {
     netSales: getNetSales(salesInRange),
     totalDiscount: getTotalDiscount(salesInRange),
     itemQuantitySold: getItemQuantitySold(saleItemsInRange),
+    isComplete: incompleteSalesCount === 0,
+    incompleteSalesCount,
   };
 }
 
@@ -99,7 +131,7 @@ export async function getSalesTrend(
     salesInRange,
     granularity,
     (sale) => sale.date,
-    (sale) => sale.net_amount
+    (sale) => (sale.net_amount !== null ? sale.net_amount : 0)
   );
   return enumeratePeriods(range, granularity).map((period) => ({
     period,
@@ -146,6 +178,7 @@ export async function getSalesByOrderType(range: DateRange): Promise<SalesByOrde
   const byType = new Map<string, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
+    if (sale.net_amount === null) continue;
     const existing = byType.get(sale.order_type) ?? { netSales: 0, orderCount: 0 };
     existing.netSales += sale.net_amount;
     existing.orderCount += 1;
@@ -171,6 +204,7 @@ export async function getSalesByPaymentMethod(range: DateRange): Promise<SalesBy
   const byMethod = new Map<string, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
+    if (sale.net_amount === null) continue;
     const existing = byMethod.get(sale.payment_method) ?? { netSales: 0, orderCount: 0 };
     existing.netSales += sale.net_amount;
     existing.orderCount += 1;
@@ -200,6 +234,7 @@ export async function getHourlySales(range: DateRange): Promise<HourlySales[]> {
   const byHour = new Map<number, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
+    if (sale.net_amount === null) continue;
     const hour = Number(sale.time.split(":")[0]);
     const existing = byHour.get(hour) ?? { netSales: 0, orderCount: 0 };
     existing.netSales += sale.net_amount;

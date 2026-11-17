@@ -8,7 +8,7 @@ export interface Breakage {
   date: string;
   item: string;
   quantity: number;
-  estimated_cost: number;
+  estimated_cost: number | null;
   department_id: string;
   reason: string;
 }

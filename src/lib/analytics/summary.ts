@@ -4,8 +4,8 @@ import { getProducts } from "@/lib/data";
 import type { DateRange } from "./date-range";
 import { getSaleItemsInRange, getSalesInRange, getNetSales } from "./sales";
 import { getFoodCost } from "./profitability";
-import { getWastageCost, getWastageInRange } from "./wastage";
-import { getBreakageCost, getBreakageInRange } from "./breakage";
+import { getWastageInRange, getWastageCostSummary } from "./wastage";
+import { getBreakageInRange, getBreakageCostSummary } from "./breakage";
 import { getOperatingCostsInRange, getTotalOperatingCosts } from "./operating-costs";
 import {
   getEstimatedOperationalContribution,
@@ -14,7 +14,9 @@ import {
 
 export interface OperationalContributionForRange extends OperationalContributionInputs {
   range: DateRange;
-  contribution: number;
+  contribution: number | null;
+  isComplete: boolean;
+  incompleteComponents: string[];
 }
 
 /**
@@ -38,9 +40,29 @@ export async function getOperationalContributionForRange(
 
   const netSales = getNetSales(salesInRange);
   const foodCost = getFoodCost(saleItemsInRange, products);
-  const wastageCost = getWastageCost(wastageInRange);
-  const breakageCost = getBreakageCost(breakageInRange);
+  const wastageSummary = getWastageCostSummary(wastageInRange);
+  const breakageSummary = getBreakageCostSummary(breakageInRange);
+  const wastageCost = wastageSummary.totalCost;
+  const breakageCost = breakageSummary.totalCost;
   const operatingCosts = getTotalOperatingCosts(operatingCostsInRange);
+
+  const incompleteComponents: string[] = [];
+  if (netSales === null) incompleteComponents.push("Sales");
+  if (foodCost === null) incompleteComponents.push("Food Cost");
+  if (!wastageSummary.isComplete) incompleteComponents.push("Wastage");
+  if (!breakageSummary.isComplete) incompleteComponents.push("Breakage");
+
+  const isComplete = incompleteComponents.length === 0;
+
+  const contribution = getEstimatedOperationalContribution({
+    netSales,
+    foodCost,
+    wastageCost,
+    breakageCost,
+    operatingCosts,
+    isWastageCostComplete: wastageSummary.isComplete,
+    isBreakageCostComplete: breakageSummary.isComplete,
+  });
 
   return {
     range,
@@ -49,12 +71,10 @@ export async function getOperationalContributionForRange(
     wastageCost,
     breakageCost,
     operatingCosts,
-    contribution: getEstimatedOperationalContribution({
-      netSales,
-      foodCost,
-      wastageCost,
-      breakageCost,
-      operatingCosts,
-    }),
+    isWastageCostComplete: wastageSummary.isComplete,
+    isBreakageCostComplete: breakageSummary.isComplete,
+    contribution,
+    isComplete,
+    incompleteComponents,
   };
 }

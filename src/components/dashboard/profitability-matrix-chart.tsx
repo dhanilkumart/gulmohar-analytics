@@ -51,14 +51,16 @@ export interface ProfitabilityMatrixPoint {
  * real result, not an invented axis split.
  */
 export function ProfitabilityMatrixChart({ data }: { data: ProfitabilityMatrixPoint[] }) {
-  const points = data.map(({ product, classification }) => ({
-    productId: product.productId,
-    name: product.name,
-    x: product.quantitySold,
-    y: Number(product.marginPercentage.toFixed(1)),
-    z: product.revenue,
-    classification,
-  }));
+  const points = data
+    .filter(({ product }) => product.marginPercentage !== null)
+    .map(({ product, classification }) => ({
+      productId: product.productId,
+      name: product.name,
+      x: product.quantitySold,
+      y: Number(product.marginPercentage!.toFixed(1)),
+      z: product.revenue,
+      classification,
+    }));
 
   return (
     <ChartCard

@@ -32,7 +32,7 @@ const breakageFormSchema = z.object({
   departmentId: z.string().min(1, "Department is required"),
   item: z.string().trim().min(1, "Item is required"),
   quantity: z.number({ error: "Enter a valid number" }).positive("Quantity must be greater than zero"),
-  cost: z.number({ error: "Enter a valid number" }).positive("Cost must be greater than zero"),
+  cost: z.number({ error: "Enter a valid number" }).min(0, "Cost cannot be negative").optional(),
   reason: z.string().trim().min(1, "Reason or notes are required").max(300, "Keep notes under 300 characters"),
 });
 
@@ -48,7 +48,6 @@ const emptyDefaults: BreakageFormValues = {
   departmentId: "",
   item: "",
   quantity: 0,
-  cost: 0,
   reason: "",
 };
 
@@ -82,7 +81,7 @@ export function BreakageFormDialog({
             departmentId: initial.departmentId,
             item: initial.item,
             quantity: initial.quantity,
-            cost: initial.cost,
+            cost: initial.cost ?? undefined,
             reason: initial.reason,
           }
         : emptyDefaults
@@ -105,7 +104,7 @@ export function BreakageFormDialog({
       departmentName: department.name,
       item: values.item,
       quantity: values.quantity,
-      cost: values.cost,
+      cost: initial?.cost ?? null,
       reason: values.reason,
     });
     onOpenChange(false);
@@ -164,7 +163,7 @@ export function BreakageFormDialog({
               <FieldError errors={[errors.item]} />
             </Field>
 
-            <Field data-invalid={!!errors.quantity}>
+            <Field className="sm:col-span-2" data-invalid={!!errors.quantity}>
               <FieldLabel htmlFor="breakage-quantity">Quantity *</FieldLabel>
               <Input
                 id="breakage-quantity"
@@ -174,12 +173,6 @@ export function BreakageFormDialog({
                 {...register("quantity", { valueAsNumber: true })}
               />
               <FieldError errors={[errors.quantity]} />
-            </Field>
-
-            <Field data-invalid={!!errors.cost}>
-              <FieldLabel htmlFor="breakage-cost">Cost *</FieldLabel>
-              <Input id="breakage-cost" type="number" min="0" step="1" {...register("cost", { valueAsNumber: true })} />
-              <FieldError errors={[errors.cost]} />
             </Field>
 
             <Field className="sm:col-span-2" data-invalid={!!errors.reason}>

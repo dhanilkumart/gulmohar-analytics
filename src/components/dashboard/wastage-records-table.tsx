@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SectionHeader, StatusBadge } from "@/components/dashboard/ui-kit";
@@ -18,14 +19,7 @@ export interface TrackedProductOption {
   foodCost: number;
 }
 
-/**
- * A locally-added wastage record — this is V1 prototype UI state only.
- * It is never written to `mock_data/`, never affects the analytics
- * fetched by the server page, and disappears on refresh. See the
- * "analytics vs. local CRUD boundary" note in
- * `src/app/dashboard/wastage/page.tsx`.
- */
-export interface LocalWastageRecord {
+export interface WastageRecordItem {
   id: string;
   date: string;
   productId: string;
@@ -34,26 +28,13 @@ export interface LocalWastageRecord {
   wastedQuantity: number;
   reason: string;
   notes: string;
-  /** wastedQuantity × the product's real food cost — never user-entered. */
-  estimatedCost: number;
+  estimatedCost: number | null;
+  outletCode?: string;
+  recordedBy?: string;
 }
 
-/**
- * Local-only Add/Edit/View/Delete workflow for wastage records, adapted
- * from the Lovable UI's Wastage route (the `useState<WastageRecord[]>`
- * + `WastageFormDialog`/`RecordDetailDialog`/`ConfirmDialog` composition
- * in gulmohar-analytics-ui/src/routes/wastage.tsx).
- *
- * Deliberately starts with an EMPTY record list rather than Lovable's
- * fabricated seed rows — this project's data layer only has real
- * `wastage.json` rows (already shown, read-only, in the charts/tables
- * above); inventing plausible-looking "example" local records here would
- * blur the line between real and prototype data, which the task
- * explicitly rules out ("do not fabricate preparation/wastage records").
- *
- * No database/API/localStorage — `records` is plain `useState`, lost on
- * refresh, exactly as intended for a V1 prototype.
- */
+export type LocalWastageRecord = WastageRecordItem;
+
 export function WastageRecordsSection({
   trackedProducts,
   reasons,
@@ -61,20 +42,133 @@ export function WastageRecordsSection({
   trackedProducts: TrackedProductOption[];
   reasons: string[];
 }) {
-  const [records, setRecords] = useState<LocalWastageRecord[]>([]);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<LocalWastageRecord | null>(null);
-  const [viewing, setViewing] = useState<LocalWastageRecord | null>(null);
-  const [deleting, setDeleting] = useState<LocalWastageRecord | null>(null);
+  const searchParams = useSearchParams();
+  const currentOutletId = searchParams.get("outletId");
 
-  const saveRecord = (record: LocalWastageRecord) => {
-    const isUpdate = records.some((item) => item.id === record.id);
-    setRecords((current) => (isUpdate ? current.map((item) => (item.id === record.id ? record : item)) : [record, ...current]));
-    setEditing(null);
-    toast.success(isUpdate ? "Wastage record updated (local prototype only)" : "Wastage record added (local prototype only)");
+  const [records, setRecords] = useState<WastageRecordItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<WastageRecordItem | null>(null);
+  const [viewing, setViewing] = useState<WastageRecordItem | null>(null);
+  const [deleting, setDeleting] = useState<WastageRecordItem | null>(null);
+
+  // Fetch real records from PostgreSQL API
+  const fetchRecords = useCallback(async () => {
+    try {
+      setLoading(true);
+      const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
+      const res = await fetch(`/api/dashboard/wastage${query}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.records)) {
+          setRecords(json.records);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch wastage records:", err);
+      toast.error("Failed to load records from database");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentOutletId]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      try {
+        setLoading(true);
+        const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
+        const res = await fetch(`/api/dashboard/wastage${query}`);
+        if (res.ok && !ignore) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.records)) {
+            setRecords(json.records);
+          }
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error("Failed to fetch wastage records:", err);
+          toast.error("Failed to load records from database");
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    load();
+    return () => {
+      ignore = true;
+    };
+  }, [currentOutletId]);
+
+  const saveRecord = async (formRecord: WastageRecordItem) => {
+    const isUpdate = Boolean(editing?.id);
+    try {
+      const method = isUpdate ? "PUT" : "POST";
+      const payload = isUpdate
+        ? {
+            id: editing?.id,
+            preparedQuantity: formRecord.preparedQuantity,
+            wastedQuantity: formRecord.wastedQuantity,
+            reason: formRecord.reason,
+            notes: formRecord.notes,
+          }
+        : {
+            outletId: currentOutletId || undefined,
+            productId: formRecord.productId,
+            dish: formRecord.productName,
+            date: formRecord.date,
+            preparedQuantity: formRecord.preparedQuantity,
+            wastedQuantity: formRecord.wastedQuantity,
+            reason: formRecord.reason,
+            notes: formRecord.notes,
+          };
+
+      const res = await fetch("/api/dashboard/wastage", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save record");
+      }
+
+      toast.success(isUpdate ? "Wastage record updated in database" : "Wastage record saved to database");
+      setEditing(null);
+      setFormOpen(false);
+      fetchRecords();
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast.error(error.message || "Failed to save wastage record");
+    }
   };
 
-  const columns: Column<LocalWastageRecord>[] = [
+  const deleteRecord = async () => {
+    if (!deleting) return;
+    try {
+      const res = await fetch(`/api/dashboard/wastage?id=${encodeURIComponent(deleting.id)}`, {
+        method: "DELETE",
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete record");
+      }
+
+      toast.success("Wastage record deleted from database");
+      setDeleting(null);
+      fetchRecords();
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast.error(error.message || "Failed to delete wastage record");
+    }
+  };
+
+  const columns: Column<WastageRecordItem>[] = [
     { key: "date", header: "Date", sortValue: (r) => r.date, cell: (r) => <span className="num">{r.date}</span> },
     {
       key: "product",
@@ -106,8 +200,12 @@ export function WastageRecordsSection({
       key: "cost",
       header: "Estimated Cost",
       align: "right",
-      sortValue: (r) => r.estimatedCost,
-      cell: (r) => <span className="font-semibold">{inr(r.estimatedCost)}</span>,
+      sortValue: (r) => r.estimatedCost ?? 0,
+      cell: (r) => (
+        <span className="font-semibold">
+          {r.estimatedCost !== null ? inr(r.estimatedCost) : "—"}
+        </span>
+      ),
     },
     {
       key: "actions",
@@ -130,8 +228,8 @@ export function WastageRecordsSection({
   return (
     <section className="surface-card p-5">
       <SectionHeader
-        title="Wastage Records (Local Prototype)"
-        description="Manually recorded wastage entries for this session only — not persisted, and not reflected in the analytics above."
+        title="Wastage Records (PostgreSQL Database)"
+        description="Active food wastage records persisted in PostgreSQL for your authorized outlet scope."
         action={
           <Button
             onClick={() => {
@@ -159,7 +257,11 @@ export function WastageRecordsSection({
               match: (row, value) => row.reason === value,
             },
           ]}
-          emptyMessage="No local wastage records yet. Use “Add Wastage” to record one for this session."
+          emptyMessage={
+            loading
+              ? "Loading database records..."
+              : "No wastage records found for this outlet. Use “Add Wastage” to record one."
+          }
         />
       </div>
 
@@ -169,7 +271,14 @@ export function WastageRecordsSection({
           setFormOpen(open);
           if (!open) setEditing(null);
         }}
-        initial={editing}
+        initial={
+          editing
+            ? {
+                ...editing,
+                estimatedCost: editing.estimatedCost ?? 0,
+              }
+            : null
+        }
         trackedProducts={trackedProducts}
         reasons={reasons}
         onSave={saveRecord}
@@ -179,16 +288,22 @@ export function WastageRecordsSection({
         open={!!viewing}
         onOpenChange={(open) => !open && setViewing(null)}
         title={viewing?.productName ?? "Wastage record"}
-        description="Local prototype wastage record — not persisted."
+        description="Database wastage record details."
         fields={
           viewing
             ? [
                 { label: "Date", value: viewing.date },
+                { label: "Product", value: viewing.productName },
                 { label: "Prepared Quantity", value: num(viewing.preparedQuantity) },
                 { label: "Wasted Quantity", value: num(viewing.wastedQuantity) },
                 { label: "Reason", value: viewing.reason },
-                { label: "Estimated Cost", value: inr(viewing.estimatedCost) },
-                { label: "Notes", value: viewing.notes },
+                {
+                  label: "Estimated Cost",
+                  value: viewing.estimatedCost !== null ? inr(viewing.estimatedCost) : "Unknown (Cost Pending)",
+                },
+                { label: "Outlet", value: viewing.outletCode ?? "—" },
+                { label: "Recorded By", value: viewing.recordedBy ?? "—" },
+                { label: "Notes", value: viewing.notes || "None" },
               ]
             : []
         }
@@ -198,14 +313,9 @@ export function WastageRecordsSection({
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title="Delete this wastage record?"
-        description="This removes the record from the current prototype session only."
+        description="This action deletes the record permanently from the PostgreSQL database."
         confirmLabel="Delete Wastage"
-        onConfirm={() => {
-          if (!deleting) return;
-          setRecords((current) => current.filter((row) => row.id !== deleting.id));
-          setDeleting(null);
-          toast.success("Wastage record deleted (local prototype only)");
-        }}
+        onConfirm={deleteRecord}
       />
     </section>
   );

@@ -25,7 +25,7 @@ export type Column<T> = {
   key: string;
   header: string;
   align?: "left" | "right";
-  sortValue?: (row: T) => number | string | undefined;
+  sortValue?: (row: T) => number | string | null | undefined;
   cell: (row: T) => ReactNode;
   className?: string;
 };

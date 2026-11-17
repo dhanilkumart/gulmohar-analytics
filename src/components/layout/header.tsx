@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Sidebar } from "./sidebar";
 import { DateRangeControl } from "./date-range-control";
 import { ComparisonControl } from "./comparison-control";
+import { OutletSelector } from "./outlet-selector";
 import { NotificationCenter } from "./notification-center";
 import { UserMenu } from "./user-menu";
 
@@ -55,6 +56,7 @@ export function Header() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+        <OutletSelector />
         <DateRangeControl />
         <ComparisonControl />
         <NotificationCenter />
