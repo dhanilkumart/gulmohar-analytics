@@ -12,7 +12,8 @@
     "db:status": "prisma migrate status",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seeds/seed.dev.ts"
+    "db:seed": "tsx prisma/seeds/seed.dev.ts",
+    "db:bootstrap": "node --no-warnings=ExperimentalWarning --experimental-strip-types prisma/seeds/seed.prod.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

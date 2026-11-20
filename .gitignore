@@ -50,3 +50,7 @@ next-env.d.ts
 
 # Supabase local CLI artifacts
 /supabase/.temp/
+
+# Temporary test scripts & output dumps
+/scripts/test-petpooja-pull.ts
+/tmp/

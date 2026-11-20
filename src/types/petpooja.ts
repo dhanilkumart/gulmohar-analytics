@@ -291,3 +291,91 @@ export interface PetpoojaGetOrdersResponse {
   order_json?: PetpoojaPullOrderEntry[];
 }
 
+export interface PetpoojaPaginationResult {
+  orders: PetpoojaPullOrderEntry[];
+  totalOrders: number;
+  pagesFetched: number;
+  lastRefId?: string;
+  hasMore: boolean;
+}
+
+export interface FetchOrdersOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface FetchAllOrdersOptions extends FetchOrdersOptions {
+  maxPages?: number;
+}
+
+// ============================================================================
+// 3. NORMALIZED PETPOOJA ORDER TYPES (Stage 2)
+// ============================================================================
+
+export interface NormalizedSalesOrderItem {
+  itemIndex: number;
+  petpoojaItemId: string;
+  petpoojaItemCode: string;
+  itemName: string;
+  categoryId?: string;
+  categoryName?: string;
+  quantity: import("@prisma/client").Prisma.Decimal;
+  unitPrice: import("@prisma/client").Prisma.Decimal;
+  totalAmount: import("@prisma/client").Prisma.Decimal;
+  itemTax: import("@prisma/client").Prisma.Decimal | null;
+  itemDiscount: import("@prisma/client").Prisma.Decimal | null;
+  specialNotes?: string;
+}
+
+export interface NormalizedSalesOrder {
+  petpoojaRestId: string;
+  petpoojaOrderId: string;
+  refId: string;
+  orderDate: string;
+  orderedAt: Date;
+  orderType: string;
+  subOrderType?: string;
+  status: string;
+  orderFrom: string;
+  coreTotal: import("@prisma/client").Prisma.Decimal | null;
+  taxTotal: import("@prisma/client").Prisma.Decimal | null;
+  discountTotal: import("@prisma/client").Prisma.Decimal | null;
+  totalAmount: import("@prisma/client").Prisma.Decimal | null;
+  roundOff: import("@prisma/client").Prisma.Decimal | null;
+  paymentType: string;
+  customPaymentType?: string;
+  tableNo?: string;
+  noOfPersons?: number;
+  serviceCharge: import("@prisma/client").Prisma.Decimal | null;
+  deliveryCharges: import("@prisma/client").Prisma.Decimal | null;
+  containerCharges: import("@prisma/client").Prisma.Decimal | null;
+  items: NormalizedSalesOrderItem[];
+}
+
+export interface NormalizationIssue {
+  severity: "error" | "warning";
+  field: string;
+  message: string;
+  value?: unknown;
+}
+
+export interface NormalizeOrderResult {
+  success: boolean;
+  order?: NormalizedSalesOrder;
+  issues: NormalizationIssue[];
+}
+
+export interface NormalizeBatchResult {
+  totalReceived: number;
+  successfulCount: number;
+  errorCount: number;
+  orders: NormalizedSalesOrder[];
+  issues: Array<{
+    orderIndex: number;
+    petpoojaOrderId?: string;
+    issues: NormalizationIssue[];
+  }>;
+}
+
+
+
