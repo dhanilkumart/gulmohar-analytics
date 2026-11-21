@@ -65,7 +65,7 @@ export function UserMenu() {
     : "User";
 
   const outletLabel =
-    user?.role === "admin"
+    user?.role === "admin" || user?.role === "manager"
       ? "All Outlets (Consolidated)"
       : user?.assignedOutlets?.[0]?.code || "Assigned Outlet";
 

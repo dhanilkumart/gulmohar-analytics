@@ -18,11 +18,15 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  outlets      Outlet[]
-  users        UserAccount[]
-  categories   Category[]
-  products     Product[]
-  ingredients  Ingredient[]
+  outlets          Outlet[]
+  users            UserAccount[]
+  categories       Category[]
+  products         Product[]
+  ingredients      Ingredient[]
+  preparationItems PreparationItem[]
+  breakageItems    BreakageItem[]
+  wastageReasons   WastageReason[]
+  breakageReasons  BreakageReason[]
 
   @@map("organizations")
 }
@@ -45,6 +49,7 @@ model Outlet {
   departments     Department[]
   employees       Employee[]
   productSettings OutletProductSetting[]
+  preparationLogs PreparationLog[]
   wastageRecords  WastageRecord[]
   breakageRecords BreakageRecord[]
   salesOrders     SalesOrder[]
@@ -77,6 +82,7 @@ model UserAccount {
   organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   outletAssignments UserOutletAssignment[]
   sessions          UserSession[]
+  recordedPreparation PreparationLog[]     @relation("PreparationRecordedBy")
   recordedWastage   WastageRecord[]        @relation("WastageRecordedBy")
   recordedBreakage  BreakageRecord[]       @relation("BreakageRecordedBy")
 
@@ -146,9 +152,12 @@ model Department {
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  outlet          Outlet           @relation(fields: [outletId], references: [id], onDelete: Restrict)
-  employees       Employee[]
-  breakageRecords BreakageRecord[]
+  outlet           Outlet            @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  employees        Employee[]
+  breakageRecords  BreakageRecord[]
+  preparationItems PreparationItem[]
+  preparationLogs  PreparationLog[]
+  wastageRecords   WastageRecord[]
 
   @@unique([outletId, departmentCode])
   @@index([outletId])
@@ -218,7 +227,6 @@ model Product {
   category       Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   recipes        RecipeItem[]
   outletSettings OutletProductSetting[]
-  wastageRecords WastageRecord[]
   orderItems     SalesOrderItem[]
 
   @@unique([organizationId, productCode])
@@ -276,29 +284,77 @@ model OutletProductSetting {
 }
 
 // =============================================================================
-// 5. Operational Records (Attributed to UserAccount)
+// 5. Preparation Items & Operational Logs (Attributed to UserAccount)
 // =============================================================================
 
-model WastageRecord {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId         String   @map("outlet_id") @db.Uuid
-  productId        String   @map("product_id") @db.Uuid
-  recordedById     String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
-  date             DateTime @db.Date
-  preparedQuantity Decimal  @map("prepared_quantity") @db.Decimal(10, 3)
-  wastedQuantity   Decimal  @map("wasted_quantity") @db.Decimal(10, 3)
-  unitFoodCost     Decimal? @map("unit_food_cost") @db.Decimal(12, 2) // Server-populated, never trusted from client
-  estimatedCost    Decimal? @map("estimated_cost") @db.Decimal(12, 2) // Server-computed
-  reason           String   // e.g. "Over-preparation", "End-of-day unsold"
-  notes            String?
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+model PreparationItem {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  departmentId   String?  @map("department_id") @db.Uuid // Optional kitchen department
+  name           String   // e.g. "Rice", "Sambar", "Coconut Chutney", "Idli Batter"
+  code           String   // e.g. "PREP-001"
+  unit           String   // e.g. "kg", "litre", "portion"
+  standardCost   Decimal? @map("standard_cost") @db.Decimal(12, 2) // Optional unit preparation/food cost
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  outlet     Outlet      @relation(fields: [outletId], references: [id], onDelete: Restrict)
-  product    Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
-  recordedBy UserAccount @relation("WastageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  department      Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  preparationLogs PreparationLog[]
+  wastageRecords  WastageRecord[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@map("preparation_items")
+}
+
+model PreparationLog {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid
+  date              DateTime @db.Date
+  quantity          Decimal  @db.Decimal(10, 3) // Prepared quantity
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("PreparationRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
   @@index([outletId, date])
+  @@index([preparationItemId])
+  @@index([recordedById])
+  @@map("preparation_logs")
+}
+
+model WastageRecord {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
+  date              DateTime @db.Date
+  wastedQuantity    Decimal  @map("wasted_quantity") @db.Decimal(10, 3)
+  unitCost          Decimal? @map("unit_cost") @db.Decimal(12, 2) // Server-populated, nullable if not configured
+  estimatedCost     Decimal? @map("estimated_cost") @db.Decimal(12, 2) // Server-computed (wastedQuantity * unitCost)
+  reason            String   // e.g. "Over-preparation", "End-of-day unsold", "Spoilage"
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("WastageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([outletId, date])
+  @@index([preparationItemId])
   @@index([recordedById])
   @@map("wastage_records")
 }
@@ -326,6 +382,60 @@ model BreakageRecord {
   @@index([departmentId])
   @@index([recordedById])
   @@map("breakage_records")
+}
+
+model BreakageItem {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  code            String   // e.g. "BRK-001"
+  name            String   // e.g. "Dinner Plate", "Water Glass", "Tea Cup"
+  category        String   @default("Tableware") // "Tableware", "Glassware", "Cutlery", "Kitchenware"
+  replacementCost Decimal? @map("replacement_cost") @db.Decimal(12, 2)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("breakage_items")
+}
+
+model WastageReason {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "WR-01"
+  label          String   // e.g. "Overproduction", "Spoilage", "Quality Issue"
+  description    String?
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("wastage_reasons")
+}
+
+model BreakageReason {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "BR-01"
+  label          String   // e.g. "Dropped", "Cracked", "Handling damage"
+  description    String?
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("breakage_reasons")
 }
 
 // =============================================================================

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/scope";
+import { getCurrentUser, resolveSafeWriteOutletId } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@prisma/client";
 
@@ -12,10 +12,10 @@ export async function requireAdminUser() {
   if (!user) {
     return { errorResponse: NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 }) };
   }
-  if (user.role !== "admin") {
+  if (user.role !== "admin" && user.role !== "manager") {
     return {
       errorResponse: NextResponse.json(
-        { error: "Forbidden: Admin privileges required for master data management" },
+        { error: "Forbidden: Admin or Manager privileges required for master data management" },
         { status: 403 }
       ),
     };
@@ -91,9 +91,14 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { outletId, departmentCode, name, benchmarkHeadcount } = body;
 
-    if (!outletId || typeof outletId !== "string") {
-      return NextResponse.json({ error: "Outlet is required" }, { status: 400 });
+    let targetOutletId: string;
+    try {
+      targetOutletId = await resolveSafeWriteOutletId(user!, outletId);
+    } catch (err: unknown) {
+      const error = err as Error;
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
+
     if (!departmentCode || typeof departmentCode !== "string" || !departmentCode.trim()) {
       return NextResponse.json({ error: "Department code is required" }, { status: 400 });
     }
@@ -103,7 +108,7 @@ export async function POST(request: Request) {
 
     // Verify outlet belongs to admin's organization
     const outlet = await prisma.outlet.findFirst({
-      where: { id: outletId, organizationId: user!.organizationId },
+      where: { id: targetOutletId, organizationId: user!.organizationId },
     });
     if (!outlet) {
       return NextResponse.json({ error: "Invalid outlet for your organization" }, { status: 400 });
@@ -117,7 +122,7 @@ export async function POST(request: Request) {
     const existing = await prisma.department.findUnique({
       where: {
         outletId_departmentCode: {
-          outletId,
+          outletId: targetOutletId,
           departmentCode: trimmedCode,
         },
       },

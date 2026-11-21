@@ -29,8 +29,9 @@ export async function GET(request: Request) {
       activeOutlet: scope.targetOutlet || (scope.allowedOutlets.length === 1 ? scope.allowedOutlets[0] : null),
       isConsolidated: scope.isConsolidated,
       canSwitch: user.role === "admin" || scope.allowedOutlets.length > 1,
-      outlets: scope.allowedOutlets,
-      allowedOutlets: scope.allowedOutlets,
+      totalOutlets: scope.allowedOutlets.length,
+      outlets: user.role === "manager" ? [] : scope.allowedOutlets,
+      allowedOutlets: user.role === "manager" ? [] : scope.allowedOutlets,
     });
   } catch (error: unknown) {
     const err = error as Error;

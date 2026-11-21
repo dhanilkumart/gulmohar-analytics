@@ -8,8 +8,7 @@ import { NavLink } from "./nav-link";
  * Filter navigation groups based on the user's active role.
  *
  * Rules:
- * - Admin: Full navigation (Main, Operations, Reports).
- * - Manager: Operations only (Wastage & Preparation, Breakage).
+ * - Admin & Manager (CEO): Full navigation (Main, Operations, Reports, Administration).
  * - Operator: Dedicated Operator Portal only.
  */
 export function SidebarNav({
@@ -34,20 +33,7 @@ export function SidebarNav({
 
   // Filter groups according to role
   const visibleGroups = NAV_GROUPS.map((group) => {
-    if (role === "admin") return group;
-
-    if (role === "manager") {
-      if (group.label === "Operations") {
-        return {
-          ...group,
-          // Manager can access wastage and breakage only (no manpower)
-          items: group.items.filter(
-            (item) => item.href === "/dashboard/wastage" || item.href === "/dashboard/breakage"
-          ),
-        };
-      }
-      return null;
-    }
+    if (role === "admin" || role === "manager") return group;
 
     if (role === "operator") {
       // Operator portal handled on dedicated screen

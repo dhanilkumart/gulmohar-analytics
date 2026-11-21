@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db/client";
 /**
  * GET /api/operator/meta
  * Returns metadata required for Operator entry dropdowns:
- * - Active products in the organization (id, name, unit)
+ * - Active preparation items in the organization (id, name, code, unit)
  * - Active departments in the operator's assigned outlet (id, name, departmentCode)
  */
 export async function GET() {
@@ -24,8 +24,8 @@ export async function GET() {
       return NextResponse.json({ error: "No active assigned outlet found" }, { status: 403 });
     }
 
-    // 1. Fetch available products in organization
-    const products = await prisma.product.findMany({
+    // 1. Fetch available preparation items in organization
+    const preparationItems = await prisma.preparationItem.findMany({
       where: {
         organizationId: user.organizationId,
         isActive: true,
@@ -33,16 +33,62 @@ export async function GET() {
       select: {
         id: true,
         name: true,
-        productCode: true,
+        code: true,
         unit: true,
+        departmentId: true,
       },
       orderBy: { name: "asc" },
     });
 
-    // 2. Fetch available departments for this specific outlet
+    // 2. Fetch active breakage items in organization
+    const breakageItems = await prisma.breakageItem.findMany({
+      where: {
+        organizationId: user.organizationId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        category: true,
+        replacementCost: true,
+      },
+      orderBy: { name: "asc" },
+    });
+
+    // 3. Fetch active wastage reasons in organization
+    const wastageReasons = await prisma.wastageReason.findMany({
+      where: {
+        organizationId: user.organizationId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        code: true,
+        label: true,
+      },
+      orderBy: [{ displayOrder: "asc" }, { label: "asc" }],
+    });
+
+    // 4. Fetch active breakage reasons in organization
+    const breakageReasons = await prisma.breakageReason.findMany({
+      where: {
+        organizationId: user.organizationId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        code: true,
+        label: true,
+      },
+      orderBy: [{ displayOrder: "asc" }, { label: "asc" }],
+    });
+
+    // 5. Fetch available departments for this specific outlet
     const departments = await prisma.department.findMany({
       where: {
         outletId: assignedOutlet.id,
+        isActive: true,
       },
       select: {
         id: true,
@@ -55,7 +101,16 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       outlet: assignedOutlet,
-      products,
+      preparationItems,
+      breakageItems: breakageItems.map((b) => ({
+        id: b.id,
+        code: b.code,
+        name: b.name,
+        category: b.category,
+        replacementCost: b.replacementCost !== null ? Number(b.replacementCost) : null,
+      })),
+      wastageReasons,
+      breakageReasons,
       departments,
     });
   } catch (error) {

@@ -290,32 +290,31 @@ await tx.salesOrderItem.createMany({
 
 ---
 
-## 7. Required Configuration Adjustments (No Schema Migration Needed)
+## 7. Required Configuration Adjustments (Completed)
 
 The database schema in [prisma/schema.prisma](file:///d:/Dhanil/Git%20Repositeries/gulmohar-analytic-dashboard/prisma/schema.prisma) already has all necessary columns, constraints, and indexes.
 
-The only operational configuration change needed in the database is **setting `petpoojaRestId` on the designated outlet**:
-```sql
-UPDATE outlets 
-SET petpooja_rest_id = '9780nusx' 
-WHERE code = 'KOZ-001' AND petpooja_rest_id IS NULL;
-```
-*(Or including `petpoojaRestId: "9780nusx"` in seed data for development/testing).*
+**Production Outlet Configuration Status:**
+- **Completed:** On 20 November 2026, the production database bootstrap (`prisma/seeds/seed.prod.ts`) was executed on the production Hostinger VPS.
+- Outlet `KOZ-001` (`Ashirvad Gulmohar - Kozhikode 1`) was provisioned with `petpooja_rest_id = '9780nusx'`, fulfilling the outlet mapping requirement.
 
 ---
 
-## 8. Proposed Implementation Sequence for Stage 3B (Ingestion Service)
+## 8. Implementation Sequence Status (Stages 3B through 3D Completed)
 
-1. **Step 1: Product & Outlet Resolver Module (`src/lib/petpooja/resolver.ts`):**
-   - Efficient cached lookups for `Outlet` by `petpoojaRestId`.
-   - In-memory map builder for `Product` matching within an organization (by `productCode` and `OutletProductSetting.petpoojaItemId`).
-2. **Step 2: Core Ingestion Service (`src/lib/petpooja/ingestion-service.ts`):**
-   - Implements `ingestNormalizedOrder(order, tx)` and `ingestNormalizedBatch(batch, options)`.
-   - Uses the transactional upsert and clean child replacement pattern.
+1. **Stage 3B: Product & Outlet Resolver Module (`src/lib/petpooja/resolver.ts`) — Completed:**
+   - Implemented cached lookups for `Outlet` by `petpoojaRestId`.
+   - In-memory map builder for `Product` matching within an organization (by `OutletProductSetting.petpoojaItemId` then `Product.productCode`).
+   - Covered by 9 passing unit tests (`tests/petpooja-resolver.test.ts`).
+2. **Stage 3C: Transactional Ingestion Service (`src/lib/petpooja/ingestion-service.ts`) — Completed:**
+   - Implemented `ingestNormalizedOrder(order, tx)` and `ingestNormalizedBatch(batch, options)`.
+   - Uses transactional upsert on `(outletId, petpoojaOrderId)` and child replacement pattern (`deleteMany` + `createMany`).
    - Collects detailed ingestion metrics (orders created, orders updated, orders skipped, items mapped, items unmapped).
-3. **Step 3: Integration Synchronization Runner (`src/lib/petpooja/sync.ts`):**
-   - Connects Stage 1 (`PetpoojaGetOrdersClient`) $\to$ Stage 2 (`normalizer`) $\to$ Stage 3 (`ingestion-service`).
-   - Accepts `targetDate: string` and `outletRestId?: string`.
-4. **Step 4: Unit & Integration Verification Suite (`tests/petpooja-ingestion.test.ts`):**
-   - Tests idempotent upserting, cancellation updates, unmapped product fallbacks, and multi-item orders using transactions with rollback or mock database fixtures.
+   - Covered by 9 passing unit tests (`tests/petpooja-ingestion.test.ts`).
+3. **Stage 3D: Synchronization Orchestrator (`src/lib/petpooja/sync.ts`) — Completed:**
+   - Connects Client $\to$ Normalizer $\to$ Resolver $\to$ Ingestion into a unified workflow.
+   - Handles multi-page pulls and error aggregation.
+   - Covered by 7 passing unit tests (`tests/petpooja-sync.test.ts`).
+4. **Pending Production Live Verification:**
+   - Controlled execution of `syncPetpoojaOrders` for operational date against the production database is pending.
 

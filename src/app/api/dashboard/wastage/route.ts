@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, resolveAuthorizedOutletScope } from "@/lib/auth/scope";
+import { getCurrentUser, resolveAuthorizedOutletScope, resolveSafeWriteOutletId } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@prisma/client";
 
 /**
  * GET /api/dashboard/wastage
- * Reads outlet-scoped wastage records from PostgreSQL with filtering by date range, reason, and product.
+ * Reads outlet-scoped wastage records from PostgreSQL with filtering by date range, reason, and preparation item.
  */
 export async function GET(request: Request) {
   try {
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     const startDateParam = searchParams.get("startDate");
     const endDateParam = searchParams.get("endDate");
     const reasonParam = searchParams.get("reason");
-    const productIdParam = searchParams.get("productId");
+    const itemIdParam = searchParams.get("itemId");
 
     // Authorize outlet access server-side
     const scope = await resolveAuthorizedOutletScope(user, requestedOutletId);
@@ -47,15 +47,16 @@ export async function GET(request: Request) {
       where.reason = reasonParam;
     }
 
-    if (productIdParam && productIdParam !== "all") {
-      where.productId = productIdParam;
+    if (itemIdParam && itemIdParam !== "all") {
+      where.preparationItemId = itemIdParam;
     }
 
     const records = await prisma.wastageRecord.findMany({
       where,
       include: {
-        product: { select: { id: true, name: true, foodCost: true, unit: true } },
+        preparationItem: { select: { id: true, name: true, code: true, unit: true, standardCost: true } },
         outlet: { select: { id: true, code: true, name: true } },
+        department: { select: { id: true, name: true, departmentCode: true } },
         recordedBy: { select: { id: true, username: true, displayName: true } },
       },
       orderBy: { date: "desc" },
@@ -64,16 +65,19 @@ export async function GET(request: Request) {
     const mapped = records.map((r) => ({
       id: r.id,
       date: r.date.toISOString().split("T")[0],
-      productId: r.productId,
-      productName: r.product.name,
-      preparedQuantity: Number(r.preparedQuantity),
+      itemId: r.preparationItemId,
+      itemName: r.preparationItem.name,
+      itemCode: r.preparationItem.code,
+      unit: r.preparationItem.unit,
       wastedQuantity: Number(r.wastedQuantity),
-      unitFoodCost: r.unitFoodCost !== null ? Number(r.unitFoodCost) : null,
+      unitCost: r.unitCost !== null ? Number(r.unitCost) : null,
       estimatedCost: r.estimatedCost !== null ? Number(r.estimatedCost) : null,
       reason: r.reason,
       notes: r.notes || "",
       outletId: r.outletId,
       outletCode: r.outlet.code,
+      departmentId: r.departmentId,
+      departmentName: r.department?.name || null,
       recordedBy: r.recordedBy.displayName,
     }));
 
@@ -97,7 +101,7 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/dashboard/wastage
- * Creates a wastage record by Manager or Admin with server-side food cost calculation.
+ * Creates a wastage record against a preparation item with strict server-side available quantity verification.
  */
 export async function POST(request: Request) {
   try {
@@ -111,97 +115,123 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const {
-      outletId,
-      productId,
-      dish,
-      date,
-      preparedQuantity,
-      wastedQuantity,
-      reason,
-      notes,
-    } = body;
+    const { outletId, itemId, date, wastedQuantity, reason, departmentId, notes } = body;
 
-    // Resolve & authorize target outlet
-    const scope = await resolveAuthorizedOutletScope(user, outletId);
-    const targetOutletId = scope.targetOutletId || (scope.allowedOutlets[0]?.id);
-
-    if (!targetOutletId) {
-      return NextResponse.json({ error: "Target outlet is required" }, { status: 400 });
+    // Resolve & authorize target outlet safely
+    let targetOutletId: string;
+    try {
+      targetOutletId = await resolveSafeWriteOutletId(user, outletId);
+    } catch (err: unknown) {
+      const error = err as Error;
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    const prepQty = Number(preparedQuantity);
     const wasteQty = Number(wastedQuantity);
-
-    if (isNaN(prepQty) || isNaN(wasteQty) || prepQty <= 0 || wasteQty <= 0) {
-      return NextResponse.json({ error: "Quantities must be positive numbers" }, { status: 400 });
+    if (isNaN(wasteQty) || wasteQty <= 0) {
+      return NextResponse.json({ error: "Wasted quantity must be a positive number greater than 0" }, { status: 400 });
     }
 
-    if (wasteQty > prepQty) {
-      return NextResponse.json({ error: "Wasted quantity cannot exceed prepared quantity" }, { status: 400 });
+    if (!itemId) {
+      return NextResponse.json({ error: "Preparation item is required" }, { status: 400 });
     }
 
-    if (!reason || typeof reason !== "string") {
+    if (!reason || typeof reason !== "string" || !reason.trim()) {
       return NextResponse.json({ error: "Reason is required" }, { status: 400 });
     }
 
     const entryDate = date ? new Date(date) : new Date();
+    // Normalize date to YYYY-MM-DD
+    const dateObj = new Date(entryDate.toISOString().split("T")[0] + "T00:00:00.000Z");
 
-    // Resolve Product
-    let product = null;
-    if (productId) {
-      product = await prisma.product.findFirst({
-        where: { id: productId, organizationId: user.organizationId },
+    // Execute within transaction for concurrency-safe available quantity check
+    const newRecord = await prisma.$transaction(async (tx) => {
+      // 1. Verify item
+      const item = await tx.preparationItem.findFirst({
+        where: { id: itemId, organizationId: user.organizationId, isActive: true },
       });
-    } else if (dish) {
-      product = await prisma.product.findFirst({
-        where: { organizationId: user.organizationId, name: { equals: dish.trim(), mode: "insensitive" } },
+
+      if (!item) {
+        throw new Error("NOT_FOUND: Specified preparation item does not exist or is inactive");
+      }
+
+      // 2. Compute total prepared quantity for this outlet, item, and date
+      const prepAgg = await tx.preparationLog.aggregate({
+        where: {
+          outletId: targetOutletId,
+          preparationItemId: item.id,
+          date: dateObj,
+        },
+        _sum: { quantity: true },
       });
-    }
 
-    if (!product) {
-      return NextResponse.json({ error: "Specified product does not exist" }, { status: 404 });
-    }
+      const totalPrepared = Number(prepAgg._sum.quantity || 0);
 
-    // Compute Cost server-side (Strictly NULL-cost policy when cost is missing)
-    let unitFoodCost: Prisma.Decimal | null = null;
-    let estimatedCost: Prisma.Decimal | null = null;
+      // 3. Compute total existing wastage for this outlet, item, and date
+      const wasteAgg = await tx.wastageRecord.aggregate({
+        where: {
+          outletId: targetOutletId,
+          preparationItemId: item.id,
+          date: dateObj,
+        },
+        _sum: { wastedQuantity: true },
+      });
 
-    if (product.foodCost !== null) {
-      unitFoodCost = new Prisma.Decimal(product.foodCost);
-      estimatedCost = unitFoodCost.mul(new Prisma.Decimal(wasteQty));
-    }
+      const totalAlreadyWasted = Number(wasteAgg._sum.wastedQuantity || 0);
+      const availableQuantity = Math.max(0, totalPrepared - totalAlreadyWasted);
 
-    const newRecord = await prisma.wastageRecord.create({
-      data: {
-        outletId: targetOutletId,
-        productId: product.id,
-        recordedById: user.id,
-        date: entryDate,
-        preparedQuantity: new Prisma.Decimal(prepQty),
-        wastedQuantity: new Prisma.Decimal(wasteQty),
-        unitFoodCost,
-        estimatedCost,
-        reason: reason.trim(),
-        notes: notes ? String(notes).trim() : null,
-      },
-      include: {
-        product: { select: { name: true } },
-        outlet: { select: { code: true } },
-      },
+      if (totalPrepared <= 0) {
+        throw new Error(
+          `VALIDATION: No preparation recorded for '${item.name}' on this date. Cannot record wastage without prior preparation.`
+        );
+      }
+
+      if (wasteQty > availableQuantity) {
+        throw new Error(
+          `VALIDATION: Wasted quantity (${wasteQty} ${item.unit}) exceeds available prepared quantity (${availableQuantity.toFixed(2)} ${item.unit}). Prepared: ${totalPrepared}, already wasted: ${totalAlreadyWasted}.`
+        );
+      }
+
+      // 4. Calculate unit cost and estimated cost server-side
+      let unitCost: Prisma.Decimal | null = null;
+      let estimatedCost: Prisma.Decimal | null = null;
+
+      if (item.standardCost !== null) {
+        unitCost = new Prisma.Decimal(item.standardCost);
+        estimatedCost = unitCost.mul(new Prisma.Decimal(wasteQty));
+      }
+
+      return await tx.wastageRecord.create({
+        data: {
+          outletId: targetOutletId,
+          preparationItemId: item.id,
+          departmentId: departmentId || item.departmentId || null,
+          recordedById: user.id,
+          date: dateObj,
+          wastedQuantity: new Prisma.Decimal(wasteQty),
+          unitCost,
+          estimatedCost,
+          reason: reason.trim(),
+          notes: notes ? String(notes).trim() : null,
+        },
+        include: {
+          preparationItem: { select: { name: true, code: true, unit: true } },
+          outlet: { select: { code: true } },
+        },
+      });
     });
 
     return NextResponse.json({
       success: true,
-      message: "Wastage record created",
+      message: "Wastage record created successfully",
       record: {
         id: newRecord.id,
         date: newRecord.date.toISOString().split("T")[0],
-        productId: newRecord.productId,
-        productName: newRecord.product.name,
-        preparedQuantity: Number(newRecord.preparedQuantity),
+        itemId: newRecord.preparationItemId,
+        itemName: newRecord.preparationItem.name,
+        itemCode: newRecord.preparationItem.code,
+        unit: newRecord.preparationItem.unit,
         wastedQuantity: Number(newRecord.wastedQuantity),
-        unitFoodCost: newRecord.unitFoodCost !== null ? Number(newRecord.unitFoodCost) : null,
+        unitCost: newRecord.unitCost !== null ? Number(newRecord.unitCost) : null,
         estimatedCost: newRecord.estimatedCost !== null ? Number(newRecord.estimatedCost) : null,
         reason: newRecord.reason,
         notes: newRecord.notes || "",
@@ -212,6 +242,12 @@ export async function POST(request: Request) {
     const err = error as Error;
     if (err.message?.startsWith("FORBIDDEN")) {
       return NextResponse.json({ error: err.message }, { status: 403 });
+    }
+    if (err.message?.startsWith("NOT_FOUND")) {
+      return NextResponse.json({ error: err.message.replace("NOT_FOUND: ", "") }, { status: 404 });
+    }
+    if (err.message?.startsWith("VALIDATION")) {
+      return NextResponse.json({ error: err.message.replace("VALIDATION: ", "") }, { status: 400 });
     }
     console.error("[Dashboard Wastage POST Error]:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -234,71 +270,106 @@ export async function PUT(request: Request) {
     }
 
     const body = await request.json();
-    const { id, preparedQuantity, wastedQuantity, reason, notes } = body;
+    const { id, wastedQuantity, reason, departmentId, notes } = body;
 
     if (!id) {
       return NextResponse.json({ error: "Record ID is required" }, { status: 400 });
     }
 
-    // Verify existing record
     const existing = await prisma.wastageRecord.findUnique({
       where: { id },
-      include: { product: true },
+      include: { preparationItem: true, outlet: true },
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Wastage record not found" }, { status: 404 });
     }
 
-    // Check outlet authority
-    await resolveAuthorizedOutletScope(user, existing.outletId);
-
-    const prepQty = preparedQuantity !== undefined ? Number(preparedQuantity) : Number(existing.preparedQuantity);
-    const wasteQty = wastedQuantity !== undefined ? Number(wastedQuantity) : Number(existing.wastedQuantity);
-
-    if (wasteQty > prepQty) {
-      return NextResponse.json({ error: "Wasted quantity cannot exceed prepared quantity" }, { status: 400 });
+    const scope = await resolveAuthorizedOutletScope(user, existing.outletId);
+    if (!scope.allowedOutlets.some((o) => o.id === existing.outletId)) {
+      return NextResponse.json({ error: "Forbidden: Unauthorized outlet" }, { status: 403 });
     }
 
-    // Recalculate cost server-side
-    let estimatedCost = existing.estimatedCost;
-    if (existing.unitFoodCost !== null) {
-      estimatedCost = existing.unitFoodCost.mul(new Prisma.Decimal(wasteQty));
+    const wasteQty = Number(wastedQuantity);
+    if (isNaN(wasteQty) || wasteQty <= 0) {
+      return NextResponse.json({ error: "Wasted quantity must be greater than 0" }, { status: 400 });
     }
 
-    const updated = await prisma.wastageRecord.update({
-      where: { id },
-      data: {
-        preparedQuantity: new Prisma.Decimal(prepQty),
-        wastedQuantity: new Prisma.Decimal(wasteQty),
-        estimatedCost,
-        reason: reason !== undefined ? String(reason).trim() : existing.reason,
-        notes: notes !== undefined ? (notes ? String(notes).trim() : null) : existing.notes,
-      },
-      include: {
-        product: { select: { name: true } },
-      },
+    // Concurrency-safe check inside transaction
+    const updated = await prisma.$transaction(async (tx) => {
+      const prepAgg = await tx.preparationLog.aggregate({
+        where: {
+          outletId: existing.outletId,
+          preparationItemId: existing.preparationItemId,
+          date: existing.date,
+        },
+        _sum: { quantity: true },
+      });
+
+      const otherWasteAgg = await tx.wastageRecord.aggregate({
+        where: {
+          outletId: existing.outletId,
+          preparationItemId: existing.preparationItemId,
+          date: existing.date,
+          id: { not: existing.id },
+        },
+        _sum: { wastedQuantity: true },
+      });
+
+      const totalPrepared = Number(prepAgg._sum.quantity || 0);
+      const otherWasted = Number(otherWasteAgg._sum.wastedQuantity || 0);
+      const available = Math.max(0, totalPrepared - otherWasted);
+
+      if (wasteQty > available) {
+        throw new Error(
+          `VALIDATION: Wasted quantity (${wasteQty} ${existing.preparationItem.unit}) exceeds available prepared quantity (${available.toFixed(2)} ${existing.preparationItem.unit}).`
+        );
+      }
+
+      const unitCost: Prisma.Decimal | null = existing.unitCost;
+      let estimatedCost: Prisma.Decimal | null = null;
+      if (unitCost !== null) {
+        estimatedCost = unitCost.mul(new Prisma.Decimal(wasteQty));
+      }
+
+      return await tx.wastageRecord.update({
+        where: { id },
+        data: {
+          wastedQuantity: new Prisma.Decimal(wasteQty),
+          estimatedCost,
+          reason: reason ? String(reason).trim() : existing.reason,
+          departmentId: departmentId || null,
+          notes: notes ? String(notes).trim() : null,
+        },
+        include: {
+          preparationItem: { select: { name: true, code: true, unit: true } },
+          outlet: { select: { code: true } },
+        },
+      });
     });
 
     return NextResponse.json({
       success: true,
-      message: "Wastage record updated",
+      message: "Wastage record updated successfully",
       record: {
         id: updated.id,
         date: updated.date.toISOString().split("T")[0],
-        productId: updated.productId,
-        productName: updated.product.name,
-        preparedQuantity: Number(updated.preparedQuantity),
+        itemId: updated.preparationItemId,
+        itemName: updated.preparationItem.name,
+        itemCode: updated.preparationItem.code,
+        unit: updated.preparationItem.unit,
         wastedQuantity: Number(updated.wastedQuantity),
+        unitCost: updated.unitCost !== null ? Number(updated.unitCost) : null,
         estimatedCost: updated.estimatedCost !== null ? Number(updated.estimatedCost) : null,
         reason: updated.reason,
         notes: updated.notes || "",
+        outletCode: updated.outlet.code,
       },
     });
   } catch (error: unknown) {
     const err = error as Error;
-    if (err.message?.startsWith("FORBIDDEN")) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
+    if (err.message?.startsWith("VALIDATION")) {
+      return NextResponse.json({ error: err.message.replace("VALIDATION: ", "") }, { status: 400 });
     }
     console.error("[Dashboard Wastage PUT Error]:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -307,7 +378,7 @@ export async function PUT(request: Request) {
 
 /**
  * DELETE /api/dashboard/wastage
- * Deletes a wastage record by Manager or Admin.
+ * Deletes a wastage record.
  */
 export async function DELETE(request: Request) {
   try {
@@ -335,22 +406,18 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Wastage record not found" }, { status: 404 });
     }
 
-    // Verify outlet scope authority
-    await resolveAuthorizedOutletScope(user, existing.outletId);
+    const scope = await resolveAuthorizedOutletScope(user, existing.outletId);
+    if (!scope.allowedOutlets.some((o) => o.id === existing.outletId)) {
+      return NextResponse.json({ error: "Forbidden: Unauthorized outlet" }, { status: 403 });
+    }
 
-    await prisma.wastageRecord.delete({
-      where: { id },
-    });
+    await prisma.wastageRecord.delete({ where: { id } });
 
     return NextResponse.json({
       success: true,
-      message: "Wastage record deleted",
+      message: "Wastage record deleted successfully",
     });
   } catch (error: unknown) {
-    const err = error as Error;
-    if (err.message?.startsWith("FORBIDDEN")) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
-    }
     console.error("[Dashboard Wastage DELETE Error]:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }

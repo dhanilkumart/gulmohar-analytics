@@ -10,15 +10,10 @@ const PUBLIC_PATHS = [
   "/favicon.ico",
 ];
 
-// Paths restricted strictly to Admin
+// Paths restricted strictly to Admin (excluding Manager/CEO)
 const ADMIN_ONLY_PREFIXES = [
-  "/dashboard/sales",
-  "/dashboard/profitability",
-  "/dashboard/manpower",
-  "/dashboard/reports",
-  "/dashboard/settings",
-  "/dashboard/master-data",
-  "/api/admin",
+  "/dashboard/outlets",
+  "/api/admin/outlets",
 ];
 
 export async function middleware(request: NextRequest) {
@@ -69,10 +64,10 @@ export async function middleware(request: NextRequest) {
   }
 
   // Manager routing:
-  // Manager is allowed ONLY /dashboard/wastage and /dashboard/breakage
+  // Manager (CEO) has organization-wide access identical to Admin except outlet management
   if (role === "manager") {
-    if (pathname === "/" || pathname === "/dashboard") {
-      return NextResponse.redirect(new URL("/dashboard/wastage", request.url));
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
     if (pathname.startsWith("/operator")) {
       return NextResponse.next();
@@ -81,8 +76,7 @@ export async function middleware(request: NextRequest) {
       if (pathname.startsWith("/api/")) {
         return NextResponse.json({ error: "Forbidden: Admin privileges required" }, { status: 403 });
       }
-      // Forbidden: redirect to their default operational dashboard
-      return NextResponse.redirect(new URL("/dashboard/wastage", request.url));
+      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
     return NextResponse.next();
   }

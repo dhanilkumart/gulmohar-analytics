@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, resolveAuthorizedOutletScope } from "@/lib/auth/scope";
+import { getCurrentUser, resolveAuthorizedOutletScope, resolveSafeWriteOutletId } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@prisma/client";
 
@@ -115,12 +115,13 @@ export async function POST(request: Request) {
       notes,
     } = body;
 
-    // Resolve & authorize target outlet
-    const scope = await resolveAuthorizedOutletScope(user, outletId);
-    const targetOutletId = scope.targetOutletId || (scope.allowedOutlets[0]?.id);
-
-    if (!targetOutletId) {
-      return NextResponse.json({ error: "Target outlet is required" }, { status: 400 });
+    // Resolve & authorize target outlet safely
+    let targetOutletId: string;
+    try {
+      targetOutletId = await resolveSafeWriteOutletId(user, outletId);
+    } catch (err: unknown) {
+      const error = err as Error;
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     if (!item || typeof item !== "string") {
@@ -134,18 +135,30 @@ export async function POST(request: Request) {
 
     // Verify department belongs to the authorized target outlet
     const department = await prisma.department.findFirst({
-      where: { id: departmentId, outletId: targetOutletId },
+      where: { id: departmentId, outletId: targetOutletId, isActive: true },
     });
 
     if (!department) {
-      return NextResponse.json({ error: "Department does not exist in target outlet" }, { status: 400 });
+      return NextResponse.json({ error: "Active department does not exist in target outlet" }, { status: 400 });
     }
 
-    // Cost policy: Breakage items have no master replacement-cost table in the current database schema.
-    // Client-supplied cost fields must NEVER be trusted, and arbitrary hardcoded fallbacks must NEVER be used.
-    // Therefore, unitCost and totalCost are stored as NULL (matching the strict NULL-cost policy).
-    const unitCost: Prisma.Decimal | null = null;
-    const totalCost: Prisma.Decimal | null = null;
+    // Cost policy: Fetch configured standard replacement cost from BreakageItem master
+    const trimmedItem = item.trim();
+    const breakageItemMaster = await prisma.breakageItem.findFirst({
+      where: {
+        organizationId: user.organizationId,
+        name: { equals: trimmedItem, mode: "insensitive" },
+        isActive: true,
+      },
+    });
+
+    let unitCost: Prisma.Decimal | null = null;
+    let totalCost: Prisma.Decimal | null = null;
+
+    if (breakageItemMaster && breakageItemMaster.replacementCost !== null) {
+      unitCost = breakageItemMaster.replacementCost;
+      totalCost = unitCost.mul(new Prisma.Decimal(qty));
+    }
 
     const entryDate = date ? new Date(date) : new Date();
 
@@ -155,7 +168,7 @@ export async function POST(request: Request) {
         departmentId: department.id,
         recordedById: user.id,
         date: entryDate,
-        item: item.trim(),
+        item: breakageItemMaster ? breakageItemMaster.name : trimmedItem,
         brokenQty: qty,
         unitCost,
         totalCost,
@@ -229,21 +242,30 @@ export async function PUT(request: Request) {
 
     const qty = quantity !== undefined ? parseInt(String(quantity), 10) : existing.brokenQty;
 
-    // Recalculate cost server-side: If a replacement-cost existed on record, recalculate totalCost.
-    // Otherwise keep NULL (never trust client-supplied cost).
-    let unitCost = existing.unitCost;
-    let totalCost = existing.totalCost;
-    if (unitCost !== null) {
+    // Recalculate cost server-side: If a replacement-cost master exists, recalculate totalCost.
+    const trimmedItem = item !== undefined ? String(item).trim() : existing.item;
+    const breakageItemMaster = await prisma.breakageItem.findFirst({
+      where: {
+        organizationId: user.organizationId,
+        name: { equals: trimmedItem, mode: "insensitive" },
+        isActive: true,
+      },
+    });
+
+    let unitCost: Prisma.Decimal | null = existing.unitCost;
+    let totalCost: Prisma.Decimal | null = existing.totalCost;
+
+    if (breakageItemMaster && breakageItemMaster.replacementCost !== null) {
+      unitCost = breakageItemMaster.replacementCost;
       totalCost = unitCost.mul(new Prisma.Decimal(qty));
-    } else {
-      unitCost = null;
-      totalCost = null;
+    } else if (unitCost !== null) {
+      totalCost = unitCost.mul(new Prisma.Decimal(qty));
     }
 
     const updated = await prisma.breakageRecord.update({
       where: { id },
       data: {
-        item: item !== undefined ? String(item).trim() : existing.item,
+        item: breakageItemMaster ? breakageItemMaster.name : trimmedItem,
         departmentId: departmentId || existing.departmentId,
         brokenQty: qty,
         unitCost,

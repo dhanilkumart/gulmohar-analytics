@@ -596,3 +596,102 @@ Complete route inventories, action permissions, department linkages, security ha
 
 **Phase 3:**
 - [ ] Demand forecasting and AI predictive preparation recommendations.
+
+---
+
+## 15. Production Infrastructure, Deployment & Database Bootstrap
+
+*Status: Infrastructure & Production Database Initialized (November 2026)*
+
+### 15.1 Production Infrastructure Specification
+- **VPS Provider:** Hostinger VPS
+- **Operating System:** Ubuntu 24.04.5 LTS
+- **Application Directory:** `/opt/apps/gulmohar-analytics`
+- **Application Name:** Gulmohar Analytics
+- **Production Container Name:** `gulmohar-analytics`
+- **Host Binding & Port:** `127.0.0.1:8100` (reverse-proxied via Nginx)
+- **Container Orchestration:** Docker Compose via `compose.prod.yaml`
+- **Reverse Proxy:** Nginx (terminates SSL and proxies traffic to `127.0.0.1:8100`)
+- **Production Database:** PostgreSQL database `gulmohar_analytics`
+- **Database Container:** `shared-postgres`
+- **Shared Docker Network:** `shared-db-net`
+
+> [!NOTE]
+> All credentials, database passwords, session secrets, and API tokens are managed via environment variables and Docker secrets. They are strictly excluded from repository files, logs, and documentation.
+
+---
+
+### 15.2 Production Database Bootstrap Implementation (`prisma/seeds/seed.prod.ts`)
+
+The production bootstrap script provisions initial business master records and the initial administrator account. It represents a **one-time business-data initialization process**, cleanly separated from schema migrations (`prisma migrate deploy`) and application deployment.
+
+#### Provisioning Configuration
+| Entity | Production Value |
+|---|---|
+| Organization Code | `AG` |
+| Organization Name | `Ashirvad Gulmohar` |
+| Production Outlet Code | `KOZ-001` |
+| Production Outlet Name | `Ashirvad Gulmohar - Kozhikode 1` |
+| Petpooja Restaurant ID | `9780nusx` |
+| Operational Department 1 | `D01` – Kitchen (Benchmark: 16) |
+| Operational Department 2 | `D02` – Service (Benchmark: 18) |
+| Initial Administrator Username | `admin` (or `PROD_ADMIN_USERNAME`) |
+
+#### Core Invariants & Safety Guards
+1. **Outlet Exclusivity:** `KOZ-002` is strictly a development/testing outlet and is **never** provisioned in production.
+2. **Administrator Password Security:** Sourced strictly from `PROD_ADMIN_PASSWORD` (minimum 12 characters required). Hashed using Argon2id. Never logged or exposed.
+3. **Idempotency Guarantee:** If the administrator account already exists, its existing password hash is **never** overwritten on subsequent runs.
+4. **Explicit Production Confirmation Guard:** Execution is immediately aborted unless `CONFIRM_PRODUCTION_BOOTSTRAP=YES`.
+5. **Database & Host Allowlist:** Validates that the target database name strictly equals `gulmohar_analytics` and the hostname is allowlisted (`shared-postgres`, `127.0.0.1`, `localhost`). Execution against development or test databases (e.g. `gulmohar_dev`) is refused.
+6. **Petpooja ID Conflict Protection:** Aborts atomically if another outlet in the database claims Petpooja Restaurant ID `9780nusx`.
+7. **Zero Mock Data:** No mock fixtures, synthetic bills, or sample employees are imported.
+8. **Transactional Atomicity:** The entire bootstrap runs inside an atomic Prisma transaction (`$transaction`).
+
+---
+
+### 15.3 Production Bootstrap Execution History (20 November 2026)
+
+On **20 November 2026**, the production database bootstrap was executed on the Hostinger VPS:
+
+1. **Codebase Deployment:** Production bootstrap script and hardening updates committed and pushed to `main` at commit `3cfcc31`.
+2. **VPS Codebase Sync:** Repository pulled via `git pull origin main` in `/opt/apps/gulmohar-analytics`.
+3. **Production Image Build:** The application Docker image was updated via:
+   ```bash
+   sudo docker compose -f compose.prod.yaml build gulmohar-analytics
+   ```
+   Verified container contents: `prisma/seeds/seed.prod.ts`, Node.js v22.23.5, and generated Prisma client.
+4. **Safety Guard Verifications:**
+   - Initial run was safely blocked: `CONFIRM_PRODUCTION_BOOTSTRAP` was missing.
+   - Second run was safely blocked: `PROD_ADMIN_PASSWORD` was missing.
+5. **Successful Execution:** With `PROD_ADMIN_PASSWORD` configured in the VPS environment, the bootstrap was executed in a one-time ephemeral container:
+   ```bash
+   sudo docker compose -f compose.prod.yaml run --rm --no-deps \
+     -e CONFIRM_PRODUCTION_BOOTSTRAP=YES \
+     --entrypoint node gulmohar-analytics \
+     --no-warnings=ExperimentalWarning --experimental-strip-types prisma/seeds/seed.prod.ts
+   ```
+6. **Verified Bootstrap Results:**
+   - Root Organization `AG` (`Ashirvad Gulmohar`) verified/created.
+   - Primary Outlet `KOZ-001` (`Ashirvad Gulmohar - Kozhikode 1`) verified/created with `petpoojaRestId = "9780nusx"`.
+   - Core Departments `D01` (Kitchen) and `D02` (Service) provisioned for `KOZ-001`.
+   - Initial Administrator `admin` created with Argon2id hash.
+   - Administrator assigned to `KOZ-001` as default outlet.
+   - Zero mock records imported.
+
+> [!IMPORTANT]
+> **Image Build vs. Running Application Container:**
+> The Docker image was successfully built, and the bootstrap script ran inside a dedicated one-time container (`--rm`) which exited and was destroyed after completion.
+> **The main running application container (`gulmohar-analytics`) was NOT restarted or replaced during this bootstrap.**
+> Deploying the updated application image to the running service is a separate operation and remains marked as **pending**.
+
+---
+
+### 15.4 Operational Safety & Runbook Principles
+
+- **Never Commit Secrets:** `.env`, `.env.production`, database connection strings, and passwords must never be committed to Git.
+- **Never Log Secrets:** Application logs, CI output, and container logs must never emit `PROD_ADMIN_PASSWORD`, `DATABASE_URL`, or authentication tokens.
+- **Strict Production Confirmation:** Production data operations must require explicit manual confirmation flags (e.g. `CONFIRM_PRODUCTION_BOOTSTRAP=YES`).
+- **Never Run Development Seeds in Production:** `prisma/seeds/seed.dev.ts` is strictly prohibited in production and refuses execution if `NODE_ENV=production`.
+- **Decouple Migrations from Bootstrap:** Schema migrations (`npx prisma migrate deploy`) must be completed and audited before running business bootstrap scripts.
+- **Avoid Unnecessary Service Disruptions:** One-time database initialization tasks should run via ephemeral containers (`docker compose run --rm --no-deps`) rather than forcing running application restarts before ready.
+- **Idempotency Standard:** All maintenance, seeding, and synchronization scripts must be safe for repeated execution without corrupting or duplicating state.

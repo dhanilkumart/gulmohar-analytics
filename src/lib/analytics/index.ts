@@ -18,3 +18,10 @@ export * from "./manpower";
 export * from "./operating-costs";
 export * from "./operational-contribution";
 export * from "./summary";
+export {
+  type ItemPreparationWastageMetric,
+  type WastageByReasonPoint,
+  type UnitQuantitySummary,
+  type LiveWastagePreparationDashboardData,
+  getLiveWastagePreparationMetrics,
+} from "./live-wastage-prep";

@@ -8,10 +8,10 @@ async function requireAdminUser() {
   if (!user) {
     return { errorResponse: NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 }) };
   }
-  if (user.role !== "admin") {
+  if (user.role !== "admin" && user.role !== "manager") {
     return {
       errorResponse: NextResponse.json(
-        { error: "Forbidden: Admin privileges required for master data management" },
+        { error: "Forbidden: Admin or Manager privileges required for master data management" },
         { status: 403 }
       ),
     };
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
           },
         },
         _count: {
-          select: { wastageRecords: true, orderItems: true },
+          select: { orderItems: true },
         },
       },
       orderBy: [{ category: { displayOrder: "asc" } }, { productCode: "asc" }],
@@ -126,7 +126,7 @@ export async function GET(request: Request) {
           unit: r.ingredient.unit,
           defaultCost: Number(r.ingredient.defaultCost),
         })),
-        usageCount: p._count.wastageRecords + p._count.orderItems,
+        usageCount: p._count.orderItems,
       })),
     });
   } catch (error: unknown) {

@@ -142,8 +142,9 @@ export async function resolveAuthorizedOutletScope(
   user: AuthenticatedUser,
   requestedOutletId?: string | null
 ): Promise<AuthorizedOutletScope> {
-  // Case 1: Admin
-  if (user.role === "admin") {
+  // Case 1: Admin & Manager (CEO)
+  // Both have organization-level visibility across all outlets
+  if (user.role === "admin" || user.role === "manager") {
     const allOutlets = await prisma.outlet.findMany({
       where: { organizationId: user.organizationId, isActive: true },
       select: { id: true, code: true, name: true, city: true },
@@ -171,7 +172,7 @@ export async function resolveAuthorizedOutletScope(
     };
   }
 
-  // Case 2: Manager & Operator
+  // Case 2: Operator (floor users)
   if (user.assignedOutlets.length === 0) {
     throw new Error("FORBIDDEN: User has no active assigned outlets.");
   }
@@ -184,35 +185,64 @@ export async function resolveAuthorizedOutletScope(
   }));
 
   // Operator cannot switch outlets: always uses their assigned outlet
-  if (user.role === "operator") {
-    const target = user.assignedOutlets[0];
-    return {
-      targetOutletId: target.id,
-      targetOutlet: target,
-      allowedOutlets,
-      isConsolidated: false,
-    };
-  }
-
-  // Manager: Can switch between assigned outlets
-  let target = user.assignedOutlets.find((o) => o.isDefault) || user.assignedOutlets[0];
-
-  if (requestedOutletId && requestedOutletId !== "all") {
-    const requested = user.assignedOutlets.find(
-      (o) => o.id === requestedOutletId || o.code === requestedOutletId
-    );
-    if (!requested) {
-      throw new Error("FORBIDDEN: Unauthorized access to unassigned outlet.");
-    }
-    target = requested;
-  }
-
+  const target = user.assignedOutlets[0];
   return {
     targetOutletId: target.id,
     targetOutlet: target,
     allowedOutlets,
     isConsolidated: false,
   };
+}
+
+/**
+ * Safely resolves an unambiguous target outlet for writing operational records
+ * (e.g., preparation, wastage, breakage, department creation).
+ *
+ * Rules:
+ * 1. If an explicit requestedOutletId is supplied, verify it belongs to user's scope.
+ * 2. If user has an unambiguous target (e.g. operator with single assignment, or single assigned outlet), use it.
+ * 3. If user has organization-wide scope (Admin/Manager):
+ *    - If there is exactly ONE active outlet in the organization, use it safely.
+ *    - If there are MULTIPLE active outlets and no unambiguous target was passed,
+ *      throw an explicit error rather than silently defaulting to the first outlet.
+ * 4. Ensures the target outlet belongs strictly to the user's organization.
+ */
+export async function resolveSafeWriteOutletId(
+  user: AuthenticatedUser,
+  requestedOutletId?: string | null
+): Promise<string> {
+  const scope = await resolveAuthorizedOutletScope(user, requestedOutletId);
+
+  // If explicit outlet was requested and resolved by scope
+  if (scope.targetOutletId) {
+    return scope.targetOutletId;
+  }
+
+  // If consolidated (Admin or Manager with no explicit target specified)
+  if (scope.isConsolidated) {
+    if (scope.allowedOutlets.length === 1) {
+      return scope.allowedOutlets[0].id;
+    }
+    if (scope.allowedOutlets.length === 0) {
+      throw new Error("INVALID_OUTLET: No active outlet found for this organization.");
+    }
+    throw new Error(
+      "AMBIGUOUS_OUTLET: Multiple active outlets exist for your organization. Please specify an unambiguous target outlet."
+    );
+  }
+
+  // For users with assigned outlets (e.g. Operator)
+  if (scope.allowedOutlets.length === 1) {
+    return scope.allowedOutlets[0].id;
+  }
+
+  if (scope.allowedOutlets.length > 1) {
+    throw new Error(
+      "AMBIGUOUS_OUTLET: Multiple outlets assigned to user. Please specify a target outlet."
+    );
+  }
+
+  throw new Error("INVALID_OUTLET: No authorized outlet available for record creation.");
 }
 
 /**

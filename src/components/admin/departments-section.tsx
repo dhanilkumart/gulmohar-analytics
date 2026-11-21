@@ -175,7 +175,7 @@ export function DepartmentsSection() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            outletId: formData.outletId,
+            outletId: formData.outletId || undefined,
             departmentCode: formData.departmentCode,
             name: formData.name,
             benchmarkHeadcount: formData.benchmarkHeadcount,
@@ -196,17 +196,6 @@ export function DepartmentsSection() {
   };
 
   const columns: Column<DepartmentItem>[] = [
-    {
-      key: "outlet",
-      header: "Outlet",
-      sortValue: (r) => r.outletCode,
-      cell: (r) => (
-        <div>
-          <span className="font-semibold">{r.outletCode}</span>
-          <span className="text-muted-foreground ml-2 text-xs">({r.outletName})</span>
-        </div>
-      ),
-    },
     {
       key: "code",
       header: "Code",
@@ -269,7 +258,7 @@ export function DepartmentsSection() {
     <section className="surface-card p-5">
       <SectionHeader
         title="Departments Directory"
-        description="Outlet-specific operational departments and staffing benchmarks."
+        description="Operational departments and staffing benchmarks."
         action={
           <Button onClick={handleOpenAdd} className="rounded-xl">
             <Plus className="mr-2 h-4 w-4" /> Add Department
@@ -283,14 +272,8 @@ export function DepartmentsSection() {
           columns={columns}
           pageSize={8}
           rowKey={(row) => row.id}
-          searchKeys={(row) => `${row.name} ${row.departmentCode} ${row.outletCode}`}
+          searchKeys={(row) => `${row.name} ${row.departmentCode}`}
           filters={[
-            {
-              key: "outlet",
-              label: "Outlet",
-              options: [...new Set(departments.map((d) => d.outletCode))],
-              match: (row, value) => row.outletCode === value,
-            },
             {
               key: "status",
               label: "Status",
@@ -309,32 +292,11 @@ export function DepartmentsSection() {
             <DialogDescription>
               {editingDept
                 ? "Update operational details for this department."
-                : "Create a new department for an assigned restaurant outlet."}
+                : "Create a new department in the master directory."}
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-4 py-2">
-            {!editingDept && (
-              <Field>
-                <FieldLabel htmlFor="outletId">Outlet *</FieldLabel>
-                <Select
-                  value={formData.outletId}
-                  onValueChange={(val) => setFormData((prev) => ({ ...prev, outletId: val }))}
-                >
-                  <SelectTrigger id="outletId">
-                    <SelectValue placeholder="Select Outlet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {outlets.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.code} - {o.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-
             {!editingDept && (
               <Field>
                 <FieldLabel htmlFor="departmentCode">Department Code *</FieldLabel>
@@ -359,45 +321,45 @@ export function DepartmentsSection() {
               />
             </Field>
 
-            <Field>
-              <FieldLabel htmlFor="benchmarkHeadcount">Benchmark Headcount</FieldLabel>
-              <Input
-                id="benchmarkHeadcount"
-                type="number"
-                min="0"
-                value={formData.benchmarkHeadcount}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, benchmarkHeadcount: parseInt(e.target.value, 10) || 0 }))
-                }
+          <Field>
+            <FieldLabel htmlFor="benchmarkHeadcount">Benchmark Headcount</FieldLabel>
+            <Input
+              id="benchmarkHeadcount"
+              type="number"
+              min="0"
+              value={formData.benchmarkHeadcount}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, benchmarkHeadcount: parseInt(e.target.value, 10) || 0 }))
+              }
+            />
+          </Field>
+
+          {editingDept && (
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={formData.isActive}
+                onChange={(e) => setFormData((prev) => ({ ...prev, isActive: e.target.checked }))}
+                className="h-4 w-4 rounded"
               />
-            </Field>
+              <label htmlFor="isActive" className="text-sm font-medium">
+                Active Department
+              </label>
+            </div>
+          )}
 
-            {editingDept && (
-              <div className="flex items-center gap-2 pt-2">
-                <input
-                  type="checkbox"
-                  id="isActive"
-                  checked={formData.isActive}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, isActive: e.target.checked }))}
-                  className="h-4 w-4 rounded"
-                />
-                <label htmlFor="isActive" className="text-sm font-medium">
-                  Active Department
-                </label>
-              </div>
-            )}
-
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {editingDept ? "Save Changes" : "Create Department"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </section>
+          <DialogFooter className="pt-4">
+            <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {editingDept ? "Save Changes" : "Create Department"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+    </section >
   );
 }

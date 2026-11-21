@@ -1,57 +1,58 @@
 "use client";
 
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { CHART_COLORS, ChartTooltip } from "@/components/dashboard/charts";
-import { ChartCard, EmptyState } from "@/components/dashboard/ui-kit";
-import { inr } from "@/lib/format";
-import type { WastageByReason } from "@/lib/analytics";
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { inr, num } from "@/lib/format";
+import type { WastageByReasonPoint } from "@/lib/analytics/live-wastage-prep";
 
-/**
- * "Wastage by Reason" — from the existing `getWastageByReason(range)`.
- * Groups are exactly whatever reasons appear in `wastage.json`
- * (currently "Over-preparation" | "End-of-day unsold") — none are
- * hard-coded here.
- */
-export function WastageByReasonChart({ data }: { data: WastageByReason[] }) {
-  const sorted = [...data].sort((a, b) => b.wastageCost - a.wastageCost);
+export function WastageByReasonChart({ data }: { data: WastageByReasonPoint[] }) {
+  if (!data || data.length === 0 || data.every((d) => d.wastedQuantity === 0)) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Wastage by Reason</CardTitle>
+          <CardDescription>Breakdown of recorded waste by operational cause</CardDescription>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center text-sm text-muted-foreground">
+          No wastage records recorded for this period.
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <ChartCard title="Wastage by Reason" description="Recorded wastage reasons.">
-      {sorted.length > 0 ? (
-        <>
-          <div className="h-[220px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={sorted}
-                  dataKey="wastageCost"
-                  nameKey="reason"
-                  innerRadius={54}
-                  outerRadius={82}
-                  paddingAngle={3}
-                  stroke="none"
-                >
-                  {sorted.map((entry, i) => (
-                    <Cell key={entry.reason} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip content={<ChartTooltip formatter={(v) => inr(v)} />} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {sorted.map((entry, i) => (
-              <li key={entry.reason} className="flex items-center gap-2 text-sm">
-                <span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                <span className="text-muted-foreground min-w-0 flex-1 truncate">{entry.reason}</span>
-                <span className="num font-semibold">{inr(entry.wastageCost)}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <EmptyState message="No wastage recorded for the selected period." />
-      )}
-    </ChartCard>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">Wastage by Reason</CardTitle>
+        <CardDescription>Breakdown of recorded waste by operational cause</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="h-72 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={false} />
+              <XAxis type="number" className="text-xs" tickLine={false} />
+              <YAxis dataKey="reason" type="category" className="text-xs" tickLine={false} width={120} />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const item = payload[0].payload as WastageByReasonPoint;
+                  return (
+                    <div className="rounded-lg border bg-popover p-2.5 text-xs shadow-md">
+                      <p className="font-semibold">{item.reason}</p>
+                      <p className="text-muted-foreground">Wasted Qty: <span className="font-medium text-foreground">{num(item.wastedQuantity)}</span></p>
+                      <p className="text-muted-foreground">Estimated Cost: <span className="font-medium text-foreground">{inr(item.wastageCost)}</span></p>
+                      <p className="text-muted-foreground">Share of Cost: <span className="font-medium text-foreground">{item.percentageOfTotal.toFixed(1)}%</span></p>
+                    </div>
+                  );
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
+              <Bar dataKey="wastedQuantity" name="Wasted Quantity" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

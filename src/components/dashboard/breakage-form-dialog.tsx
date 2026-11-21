@@ -51,17 +51,35 @@ const emptyDefaults: BreakageFormValues = {
   reason: "",
 };
 
+export interface BreakageItemOption {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  replacementCost: number | null;
+}
+
+export interface BreakageReasonOption {
+  id: string;
+  code: string;
+  label: string;
+}
+
 export function BreakageFormDialog({
   open,
   onOpenChange,
   initial,
   departments,
+  breakageItems = [],
+  reasons = [],
   onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initial: LocalBreakageRecord | null;
   departments: DepartmentOption[];
+  breakageItems?: BreakageItemOption[];
+  reasons?: BreakageReasonOption[];
   onSave: (record: LocalBreakageRecord) => void;
 }) {
   const [submitError, setSubmitError] = useState("");
@@ -70,8 +88,14 @@ export function BreakageFormDialog({
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<BreakageFormValues>({ resolver: zodResolver(breakageFormSchema), defaultValues: emptyDefaults });
+
+  const selectedItemName = watch("item");
+  const matchedItem = breakageItems.find(
+    (b) => b.name.toLowerCase() === (selectedItemName || "").toLowerCase()
+  );
 
   useEffect(() => {
     reset(
@@ -84,9 +108,14 @@ export function BreakageFormDialog({
             cost: initial.cost ?? undefined,
             reason: initial.reason,
           }
-        : emptyDefaults
+        : {
+            ...emptyDefaults,
+            item: breakageItems[0]?.name || "",
+            reason: reasons[0]?.label || "Handling damage",
+            departmentId: departments[0]?.departmentId || "",
+          }
     );
-  }, [initial, open, reset]);
+  }, [initial, open, reset, breakageItems, reasons, departments]);
 
   const submit = async (values: BreakageFormValues) => {
     setSubmitError("");
@@ -120,82 +149,141 @@ export function BreakageFormDialog({
             to the underlying dataset and does not affect the analytics shown elsewhere on this page.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit(submit)} className="space-y-5 px-5 pb-5">
-          {submitError ? (
-            <div role="alert" className="bg-danger-soft text-danger rounded-xl px-3 py-2.5 text-sm">
-              {submitError}
+        {breakageItems.length === 0 ? (
+          <div className="p-6">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-semibold">No active breakage items configured.</p>
+              <p className="mt-1 text-xs">
+                An administrator must configure trackable Breakage Items in Master Data Management before breakage events can be recorded.
+              </p>
             </div>
-          ) : null}
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit(submit)} className="space-y-5 px-5 pb-5">
+            {submitError ? (
+              <div role="alert" className="bg-danger-soft text-danger rounded-xl px-3 py-2.5 text-sm">
+                {submitError}
+              </div>
+            ) : null}
 
-          <FieldGroup className="grid gap-4 sm:grid-cols-2 sm:gap-4">
-            <Field data-invalid={!!errors.date}>
-              <FieldLabel htmlFor="breakage-date">Date *</FieldLabel>
-              <Input id="breakage-date" type="date" {...register("date")} />
-              <FieldError errors={[errors.date]} />
-            </Field>
+            <FieldGroup className="grid gap-4 sm:grid-cols-2 sm:gap-4">
+              <Field data-invalid={!!errors.date}>
+                <FieldLabel htmlFor="breakage-date">Date *</FieldLabel>
+                <Input id="breakage-date" type="date" {...register("date")} />
+                <FieldError errors={[errors.date]} />
+              </Field>
 
-            <Controller
-              control={control}
-              name="departmentId"
-              render={({ field }) => (
-                <Field data-invalid={!!errors.departmentId}>
-                  <FieldLabel htmlFor="breakage-department">Department *</FieldLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger id="breakage-department">
-                      <SelectValue placeholder="Select department" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {departments.map((department) => (
-                        <SelectItem key={department.departmentId} value={department.departmentId}>
-                          {department.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldError errors={[errors.departmentId]} />
-                </Field>
-              )}
-            />
-
-            <Field className="sm:col-span-2" data-invalid={!!errors.item}>
-              <FieldLabel htmlFor="breakage-item">Item *</FieldLabel>
-              <Input id="breakage-item" placeholder="e.g. Dinner Plate or Glass Tumbler" {...register("item")} />
-              <FieldError errors={[errors.item]} />
-            </Field>
-
-            <Field className="sm:col-span-2" data-invalid={!!errors.quantity}>
-              <FieldLabel htmlFor="breakage-quantity">Quantity *</FieldLabel>
-              <Input
-                id="breakage-quantity"
-                type="number"
-                min="0"
-                step="1"
-                {...register("quantity", { valueAsNumber: true })}
+              <Controller
+                control={control}
+                name="departmentId"
+                render={({ field }) => (
+                  <Field data-invalid={!!errors.departmentId}>
+                    <FieldLabel htmlFor="breakage-department">Department *</FieldLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger id="breakage-department">
+                        <SelectValue placeholder="Select department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {departments.map((department) => (
+                          <SelectItem key={department.departmentId} value={department.departmentId}>
+                            {department.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FieldError errors={[errors.departmentId]} />
+                  </Field>
+                )}
               />
-              <FieldError errors={[errors.quantity]} />
-            </Field>
 
-            <Field className="sm:col-span-2" data-invalid={!!errors.reason}>
-              <FieldLabel htmlFor="breakage-reason">Reason / Notes *</FieldLabel>
-              <Textarea
-                id="breakage-reason"
-                placeholder="Describe the breakage event"
-                className="min-h-24"
-                {...register("reason")}
+              <Controller
+                control={control}
+                name="item"
+                render={({ field }) => (
+                  <Field className="sm:col-span-2" data-invalid={!!errors.item}>
+                    <FieldLabel htmlFor="breakage-item">Breakage Item *</FieldLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger id="breakage-item">
+                        <SelectValue placeholder="Select breakage item" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {breakageItems.map((item) => (
+                          <SelectItem key={item.id} value={item.name}>
+                            {item.name} ({item.code}) — {item.category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {matchedItem && matchedItem.replacementCost !== null && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Standard Replacement Cost: <span className="font-medium text-foreground">₹{matchedItem.replacementCost}</span>
+                      </p>
+                    )}
+                    <FieldError errors={[errors.item]} />
+                  </Field>
+                )}
               />
-              <FieldError errors={[errors.reason]} />
-            </Field>
-          </FieldGroup>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? <LoaderCircle className="animate-spin" /> : null} Save Breakage
-            </Button>
-          </DialogFooter>
-        </form>
+              <Field className="sm:col-span-2" data-invalid={!!errors.quantity}>
+                <FieldLabel htmlFor="breakage-quantity">Damaged Quantity *</FieldLabel>
+                <Input
+                  id="breakage-quantity"
+                  type="number"
+                  min="1"
+                  step="1"
+                  {...register("quantity", { valueAsNumber: true })}
+                />
+                <FieldError errors={[errors.quantity]} />
+              </Field>
+
+              <Controller
+                control={control}
+                name="reason"
+                render={({ field }) => (
+                  <Field className="sm:col-span-2" data-invalid={!!errors.reason}>
+                    <FieldLabel htmlFor="breakage-reason">Reason *</FieldLabel>
+                    {reasons.length > 0 ? (
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger id="breakage-reason">
+                          <SelectValue placeholder="Select standard reason" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {reasons.map((r) => (
+                            <SelectItem key={r.id} value={r.label}>
+                              {r.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id="breakage-reason"
+                        placeholder="e.g. Handling damage or Dropped"
+                        value={field.value}
+                        onChange={field.onChange}
+                      />
+                    )}
+                    <FieldError errors={[errors.reason]} />
+                  </Field>
+                )}
+              />
+            </FieldGroup>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? <LoaderCircle className="animate-spin" /> : null} Save Breakage
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

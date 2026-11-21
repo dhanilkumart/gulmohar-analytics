@@ -258,7 +258,7 @@ async function runOperatorEndpointVerification() {
     assert(dbWastage !== null, "Wastage record persisted in PostgreSQL");
     assert(dbWastage?.outletId === outletA.id, "outletId is strictly Operator A's assigned outlet (tampered outletB ignored)");
     assert(dbWastage?.recordedById === operatorA.id, "recordedById is strictly authenticated Operator A (tampered adminId ignored)");
-    assert(Number(dbWastage?.unitFoodCost) === 35.5, "unitFoodCost computed server-side from product master (₹35.50)");
+    assert(Number(dbWastage?.unitCost) === 35.5, "unitCost computed server-side from product/prep master (₹35.50)");
     // 6 * 35.5 = 213.00
     assert(Number(dbWastage?.estimatedCost) === 213.0, "estimatedCost computed server-side: 6 * 35.50 = ₹213.00 (tampered cost ignored)");
 
@@ -281,7 +281,7 @@ async function runOperatorEndpointVerification() {
     const dbNullCostWastage = await prisma.wastageRecord.findUnique({
       where: { id: nullCostBody.record.id },
     });
-    assert(dbNullCostWastage?.unitFoodCost === null, "When product cost is unknown, unitFoodCost stores NULL");
+    assert(dbNullCostWastage?.unitCost === null, "When product cost is unknown, unitCost stores NULL");
     assert(dbNullCostWastage?.estimatedCost === null, "When product cost is unknown, estimatedCost stores NULL (Never false zero!)");
 
     // -------------------------------------------------------------------------

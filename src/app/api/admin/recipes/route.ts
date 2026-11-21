@@ -8,10 +8,10 @@ async function requireAdminUser() {
   if (!user) {
     return { errorResponse: NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 }) };
   }
-  if (user.role !== "admin") {
+  if (user.role !== "admin" && user.role !== "manager") {
     return {
       errorResponse: NextResponse.json(
-        { error: "Forbidden: Admin privileges required for master data management" },
+        { error: "Forbidden: Admin or Manager privileges required for master data management" },
         { status: 403 }
       ),
     };

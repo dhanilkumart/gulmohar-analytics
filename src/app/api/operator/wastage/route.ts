@@ -5,13 +5,11 @@ import { Prisma } from "@prisma/client";
 
 export async function POST(request: Request) {
   try {
-    // 1. Authenticate user
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 });
     }
 
-    // 2. Strict Operator Role Check
     if (user.role !== "operator") {
       return NextResponse.json(
         { error: "Forbidden: Only users with the Operator role may submit through this endpoint" },
@@ -19,7 +17,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Resolve Operator Authorized Outlet strictly from server-side database assignments
     const authorizedOutlet = user.assignedOutlets[0];
     if (!authorizedOutlet || !authorizedOutlet.id) {
       return NextResponse.json(
@@ -28,166 +25,135 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Parse and validate body
     const body = await request.json();
-    const {
-      dish,
-      productId,
-      preparedQuantity,
-      wastedQuantity,
-      reason,
-      notes,
-      date,
-    } = body;
+    const { itemId, wastedQuantity, reason, notes, date } = body;
 
-    // Reject or ignore client-supplied security/financial fields
-    // (outletId, recordedById, unitFoodCost, estimatedCost)
-
-    // Validate quantities
-    const prepQtyNum = Number(preparedQuantity);
-    const wasteQtyNum = Number(wastedQuantity);
-
-    if (
-      isNaN(prepQtyNum) ||
-      isNaN(wasteQtyNum) ||
-      prepQtyNum <= 0 ||
-      wasteQtyNum <= 0
-    ) {
+    const wasteQty = Number(wastedQuantity);
+    if (isNaN(wasteQty) || wasteQty <= 0) {
       return NextResponse.json(
-        { error: "Prepared and wasted quantities must be positive numbers greater than 0" },
+        { error: "Wasted quantity must be a positive number greater than 0" },
         { status: 400 }
       );
     }
 
-    if (wasteQtyNum > prepQtyNum) {
-      return NextResponse.json(
-        { error: "Wasted quantity cannot exceed prepared quantity" },
-        { status: 400 }
-      );
+    if (!itemId) {
+      return NextResponse.json({ error: "Preparation item is required" }, { status: 400 });
     }
 
-    // Validate Reason
     const sanitizedReason = typeof reason === "string" ? reason.trim() : "";
     if (!sanitizedReason) {
       return NextResponse.json({ error: "Reason for wastage is required" }, { status: 400 });
     }
 
-    // Validate Date (defaults to today in UTC/IST if omitted, or validates parsed date)
     let entryDate = new Date();
     if (date) {
       const parsed = new Date(date);
-      if (isNaN(parsed.getTime())) {
-        return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
+      if (!isNaN(parsed.getTime())) {
+        entryDate = parsed;
       }
-      entryDate = parsed;
     }
+    const dateObj = new Date(entryDate.toISOString().split("T")[0] + "T00:00:00.000Z");
 
-    // 5. Resolve Product in PostgreSQL (by explicit productId or case-insensitive dish name)
-    let targetProduct = null;
-    if (productId && typeof productId === "string") {
-      targetProduct = await prisma.product.findFirst({
+    const newRecord = await prisma.$transaction(async (tx) => {
+      // 1. Verify Item
+      const item = await tx.preparationItem.findFirst({
         where: {
-          id: productId,
+          id: itemId,
           organizationId: user.organizationId,
           isActive: true,
         },
       });
-    } else if (dish && typeof dish === "string") {
-      const trimmedDish = dish.trim();
-      targetProduct = await prisma.product.findFirst({
-        where: {
-          organizationId: user.organizationId,
-          name: { equals: trimmedDish, mode: "insensitive" },
-          isActive: true,
-        },
-      });
-    }
 
-    // If product is not found, dynamically link or create within the organization
-    if (!targetProduct) {
-      const dishName = typeof dish === "string" && dish.trim() ? dish.trim() : "Kitchen Item";
-
-      // Find or create a default category for floor items
-      let defaultCat = await prisma.category.findFirst({
-        where: { organizationId: user.organizationId },
-      });
-      if (!defaultCat) {
-        defaultCat = await prisma.category.create({
-          data: {
-            organizationId: user.organizationId,
-            categoryCode: "CAT-GEN",
-            name: "General Food Items",
-          },
-        });
+      if (!item) {
+        throw new Error("NOT_FOUND: Specified preparation item not found or is inactive");
       }
 
-      // Generate a product code
-      const generatedCode = `PRD-${Date.now().toString().slice(-6)}`;
-      targetProduct = await prisma.product.create({
+      // 2. Check available prepared quantity
+      const prepAgg = await tx.preparationLog.aggregate({
+        where: {
+          outletId: authorizedOutlet.id,
+          preparationItemId: item.id,
+          date: dateObj,
+        },
+        _sum: { quantity: true },
+      });
+
+      const totalPrepared = Number(prepAgg._sum.quantity || 0);
+
+      const wasteAgg = await tx.wastageRecord.aggregate({
+        where: {
+          outletId: authorizedOutlet.id,
+          preparationItemId: item.id,
+          date: dateObj,
+        },
+        _sum: { wastedQuantity: true },
+      });
+
+      const totalAlreadyWasted = Number(wasteAgg._sum.wastedQuantity || 0);
+      const available = Math.max(0, totalPrepared - totalAlreadyWasted);
+
+      if (totalPrepared <= 0) {
+        throw new Error(
+          `VALIDATION: No preparation recorded for '${item.name}' on this date. Cannot record waste without preparation.`
+        );
+      }
+
+      if (wasteQty > available) {
+        throw new Error(
+          `VALIDATION: Wasted quantity (${wasteQty} ${item.unit}) exceeds available prepared quantity (${available.toFixed(2)} ${item.unit}).`
+        );
+      }
+
+      let unitCost: Prisma.Decimal | null = null;
+      let estimatedCost: Prisma.Decimal | null = null;
+      if (item.standardCost !== null) {
+        unitCost = new Prisma.Decimal(item.standardCost);
+        estimatedCost = unitCost.mul(new Prisma.Decimal(wasteQty));
+      }
+
+      return await tx.wastageRecord.create({
         data: {
-          organizationId: user.organizationId,
-          categoryId: defaultCat.id,
-          productCode: generatedCode,
-          name: dishName,
-          defaultSellingPrice: new Prisma.Decimal("0.00"),
-          foodCost: null, // Follow NULL-cost policy when unknown. Never assume zero!
-          unit: "portion",
-          isActive: true,
+          outletId: authorizedOutlet.id,
+          preparationItemId: item.id,
+          departmentId: item.departmentId || null,
+          recordedById: user.id,
+          date: dateObj,
+          wastedQuantity: new Prisma.Decimal(wasteQty),
+          unitCost,
+          estimatedCost,
+          reason: sanitizedReason,
+          notes: notes ? String(notes).trim() : null,
+        },
+        include: {
+          preparationItem: { select: { name: true, unit: true } },
+          outlet: { select: { code: true } },
         },
       });
-    }
-
-    // 6. Server-Side Cost Computation (Strictly server calculated, NEVER client-trusted)
-    // Formula: estimatedCost = wastedQuantity * unitFoodCost (or null if foodCost is null)
-    let unitFoodCost: Prisma.Decimal | null = null;
-    let estimatedCost: Prisma.Decimal | null = null;
-
-    if (targetProduct.foodCost !== null) {
-      unitFoodCost = new Prisma.Decimal(targetProduct.foodCost);
-      estimatedCost = unitFoodCost.mul(new Prisma.Decimal(wasteQtyNum));
-    }
-
-    // 7. Persist WastageRecord to PostgreSQL
-    const createdRecord = await prisma.wastageRecord.create({
-      data: {
-        outletId: authorizedOutlet.id, // Strictly server-resolved authorized outlet
-        productId: targetProduct.id,
-        recordedById: user.id, // Strictly authenticated user account
-        date: entryDate,
-        preparedQuantity: new Prisma.Decimal(prepQtyNum),
-        wastedQuantity: new Prisma.Decimal(wasteQtyNum),
-        unitFoodCost, // Server-computed or NULL
-        estimatedCost, // Server-computed or NULL
-        reason: sanitizedReason,
-        notes: typeof notes === "string" ? notes.trim() : null,
-      },
-      include: {
-        product: { select: { name: true, unit: true } },
-        outlet: { select: { code: true, name: true } },
-      },
     });
 
-    // 8. Return success response (omitting confidential food costs from response if floor safety requires)
     return NextResponse.json({
       success: true,
-      message: "Wastage record logged successfully",
+      message: "Wastage recorded successfully",
       record: {
-        id: createdRecord.id,
-        dish: createdRecord.product.name,
-        preparedQuantity: Number(createdRecord.preparedQuantity),
-        wastedQuantity: Number(createdRecord.wastedQuantity),
-        unit: createdRecord.product.unit,
-        reason: createdRecord.reason,
-        notes: createdRecord.notes,
-        outletCode: createdRecord.outlet.code,
-        date: createdRecord.date.toISOString(),
+        id: newRecord.id,
+        date: newRecord.date.toISOString().split("T")[0],
+        itemName: newRecord.preparationItem.name,
+        unit: newRecord.preparationItem.unit,
+        wastedQuantity: Number(newRecord.wastedQuantity),
+        reason: newRecord.reason,
+        notes: newRecord.notes || "",
+        outletCode: newRecord.outlet.code,
       },
     });
-  } catch (error) {
-    console.error("[Operator Wastage Entry API Error]:", error);
-    return NextResponse.json(
-      { error: "Failed to log wastage record. Please try again." },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const err = error as Error;
+    if (err.message?.startsWith("NOT_FOUND")) {
+      return NextResponse.json({ error: err.message.replace("NOT_FOUND: ", "") }, { status: 404 });
+    }
+    if (err.message?.startsWith("VALIDATION")) {
+      return NextResponse.json({ error: err.message.replace("VALIDATION: ", "") }, { status: 400 });
+    }
+    console.error("[Operator Wastage POST Error]:", error);
+    return NextResponse.json({ error: "Failed to log operational wastage" }, { status: 500 });
   }
 }

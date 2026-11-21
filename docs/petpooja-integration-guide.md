@@ -1018,21 +1018,24 @@ When expanding from a single test outlet to multi-outlet operations (e.g. Kozhik
 
 ---
 
-## 13. Petpooja Integration Status & Verification Matrix (Pre-Validation Audit)
+## 13. Petpooja Integration Status & Verification Matrix (November 2026)
 
-*Status: Audit Completed (November 2026)*
+*Status: Stage 1 through Stage 3D Implemented & Verified in Test Suites; Production Database Initialized; Live Production Ingestion Pending Verification*
 
 | Component | Target API | Implementation Status | Test Status | Notes / Blockers |
 | :--- | :--- | :---: | :---: | :--- |
-| **Type Definitions** (`src/types/petpooja.ts`) | Global Webhook & Get Orders | **Implemented** | **Verified (Build/Linter)** | Separate push and pull schemas according to official PDFs. |
+| **Type Definitions** (`src/types/petpooja.ts`) | Global Webhook & Get Orders | **Implemented** | **Verified (Build/Linter)** | Separate push and pull schemas according to official Petpooja specifications. |
 | **Webhook Receiver** (`/api/webhooks/petpooja`) | Global API Push | **Implemented** | **Tested with synthetic demo** | Staged on Vercel/Supabase; stores full raw payload into `public.petpooja_webhook_events`. |
 | **Payload Validator** (`src/lib/petpooja/validator.ts`) | Global API Push | **Implemented** | **Verified** | Validates `orderdetails`, `properties`, and optional static token. Does not filter by restaurant ID at ingress. |
 | **PII Logger** (`src/lib/petpooja/logger.ts`) | Logging Utility | **Implemented** | **Verified** | Masks phone numbers, GSTIN, and full address; redacts sensitive customer data from server logs. |
-| **Get Orders Client** (`src/lib/petpooja/get-orders-client.ts`) | Get Orders Pull | **Implemented (Scaffold)** | **Untested (No Live Call)** | `fetchOrders()` deliberately throws pending production credentials. `buildRequestBody()` is fully typed. |
+| **Get Orders Client** (`src/lib/petpooja/get-orders-client.ts`) | Get Orders Pull | **Implemented** | **10/10 Tests Passed** | Production client with cookie authentication, 1000-order pagination, loop protection, and timeout retry. Live test on 2026-11-18 returned HTTP 200 with 507 orders for 2026-11-17 (did not write to production DB). |
+| **Response Normalizer** (`src/lib/petpooja/normalizer.ts`) | Normalization Engine | **Implemented** | **12/12 Tests Passed** | Converts raw Petpooja order structures to `NormalizedSalesOrder` with exact `Prisma.Decimal` arithmetic, IST/UTC timezone handling, and PII masking. |
+| **Outlet & Product Resolver** (`src/lib/petpooja/resolver.ts`) | Master Data Resolver | **Implemented** | **9/9 Tests Passed** | Resolves `restID` to internal `outletId` and `organizationId`. Matches items by `OutletProductSetting.petpoojaItemId` then `Product.productCode`. Unmapped items safely return `productId: null`. |
+| **Transactional Ingestion Service** (`src/lib/petpooja/ingestion-service.ts`) | Database Persistence | **Implemented** | **9/9 Tests Passed** | Performs atomic upsert on `(outletId, petpoojaOrderId)` with clean child line-item replacement (`deleteMany` + `createMany`). Preserves nullable financials. |
+| **Sync Orchestrator** (`src/lib/petpooja/sync.ts`) | End-to-End Pipeline | **Implemented** | **7/7 Tests Passed** | Connects Client $\to$ Normalizer $\to$ Resolver $\to$ Ingestion. Handles multi-page pulls, partial errors, and statistics reporting. |
 | **Staging Ingestion Table** (`public.petpooja_webhook_events`) | Supabase Staging | **Implemented** | **Active on Supabase** | Stores raw payload in JSONB with event ID, order reference, and receipt timestamp. |
-| **Normalized Tables** (`restaurants`, `menu_items`, `sales_orders`, `sales_order_items`) | Supabase Migration | **Deferred / Reference Only** | **Not Executed** | Schema defined in `20261109_phase1_minimum_reliable_schema.sql`; not applied to live DB. |
-| **Application Database (`outlets.petpooja_rest_id`)** | PostgreSQL 16 | **Implemented (Schema)** | **Ready for Verified IDs** | `petpooja_rest_id` is unique and nullable. All local development outlets currently have `NULL` to prevent unverified mapping. |
-| **Gulmohar Production REST ID (`9780nusx`)** | POS Identifier | **Identified** | **Pending Validation** | Confirmed production REST ID for Gulmohar; awaiting live API test or demo push verification. |
+| **Production Database (`outlets.petpooja_rest_id`)** | PostgreSQL 16 (`gulmohar_analytics`) | **Initialized** | **Verified on Hostinger VPS** | Initialized via `seed.prod.ts` on 20 Nov 2026. Outlet `KOZ-001` configured with `petpoojaRestId = "9780nusx"`. |
+| **Live Production Sales Sync** | Production Ingestion | **Pending** | **Pending Live Run** | Full pipeline is implemented and unit-tested, but has NOT yet been run against the live production database. |
 
 ---
 
@@ -1046,19 +1049,40 @@ When expanding from a single test outlet to multi-outlet operations (e.g. Kozhik
    - Append-only: all deliveries are stored unmodified with `processing_status = 'received'`.
 2. **Duplicate Order Prevention (Implemented in PostgreSQL - Migration `20261115070600_add_status_and_unique_to_sales_orders`):**
    - Hardened `sales_orders` with unique constraint `@@unique([outletId, petpoojaOrderId])`.
-   - Normalization worker can safely upsert or insert on `(outlet_id, petpooja_order_id)`.
+   - Normalization worker safely upserts on `(outlet_id, petpooja_order_id)`.
 3. **Handling Updated / Modified / Cancelled Orders (Implemented in PostgreSQL - Migration `20261115070600_add_status_and_unique_to_sales_orders`):**
    - Added `status String @default("Success")` column mapped to `sales_orders.status`.
    - Preserves Petpooja order status ("Success", "Cancelled"), separated from internal reconciliation statuses `financial_status` and `matching_status`.
    - Analytics queries exclude `status = 'Cancelled'` from revenue totals.
-4. **Multi-Outlet Mapping (Implemented in Schema, Pending Config):**
+4. **Multi-Outlet Mapping (Implemented & Initialized in Production):**
    - Outlets resolved via `outlets.petpooja_rest_id`.
-   - Events with unknown `restID` are flagged as `unregistered_restaurant` in staging without crashing worker queues or blocking registered outlets.
+   - `KOZ-001` initialized with `petpoojaRestId = '9780nusx'` via `prisma/seeds/seed.prod.ts` on 20 November 2026.
+   - Events with unknown `restID` are flagged as `unregistered_restaurant` in staging or returned as `OUTLET_UNMAPPED` without crashing worker queues or blocking registered outlets.
 
-### 14.2 External Dependencies & Unclarified Items
-- **Petpooja Date Window Clarification:** Confirmation on whether `order_date` in Get Orders strictly uses T-1 business day or can accept current date ranges.
-- **Production API Credentials:** Production `app_key`, `app_secret`, and `access_token` for outlet `9780nusx`.
-- **Live Demo Push:** Execution of a real demo bill push to `/api/webhooks/petpooja` from Gulmohar POS terminal.
+### 14.2 Production Readiness & Verified Implementation
+The full Petpooja integration pipeline has been completed across Stages 1–3D:
+- **Stage 1 (API Client):** `src/lib/petpooja/get-orders-client.ts`
+- **Stage 2 (Response Normalizer):** `src/lib/petpooja/normalizer.ts`
+- **Stage 3A (Database Readiness Audit):** Confirmed existing schema readiness without migrations.
+- **Stage 3B (Outlet & Product Resolver):** `src/lib/petpooja/resolver.ts`
+- **Stage 3C (Transactional Ingestion Service):** `src/lib/petpooja/ingestion-service.ts`
+- **Stage 3D (Sync Orchestrator):** `src/lib/petpooja/sync.ts`
+
+**Live Verification Note:**
+- On 18 November 2026, a live API pull for operational date `2026-11-17` returned HTTP 200 with 507 orders for restaurant `9780nusx`.
+- That test was a read-only fetch that verified API connectivity, authentication, and payload schema; it **did not write records to the production database**.
+
+### 14.3 Pending Production Deployment & Validation Work
+The following tasks remain pending before production live sales ingestion is considered complete:
+1. **Application Login Verification:** Verify initial administrator login via `/login` with credentials provisioned by `seed.prod.ts`.
+2. **Deploy Updated Application Runtime:** Restart/recreate the production application container `gulmohar-analytics` to run the updated Docker image built at commit `3cfcc31`.
+3. **Verify Production Credentials:** Verify that VPS `.env` contains valid Petpooja credentials without exposing secrets.
+4. **Controlled Production Sales Sync:** Execute a controlled live synchronization for a specific operational date (e.g. `2026-11-17`).
+5. **Database Import Verification:** Verify ingested `sales_orders`, line items, financial sums, and outlet associations directly in PostgreSQL `gulmohar_analytics`.
+6. **Dashboard Verification:** Confirm that `/dashboard` and `/dashboard/reports` accurately reflect the ingested sales orders in database mode (`DATA_SOURCE=database`).
+
+> [!WARNING]
+> Do not mark production ingestion as completed. A successful API pull and successful database bootstrap do not mean production sales ingestion has been verified.
 
 ### 14.3 Deferred Scope Checklist (Phase 2+)
 - [ ] Automated real-time stock deduction on order arrival.

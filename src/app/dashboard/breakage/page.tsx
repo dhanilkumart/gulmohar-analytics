@@ -7,7 +7,7 @@ import { BreakageDetailTable, type BreakageDetailRow } from "@/components/dashbo
 import { BreakageRecordsSection, type DepartmentOption } from "@/components/dashboard/breakage-records-table";
 import { inr, num } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getDepartments } from "@/lib/data";
+import { getDepartments, getActiveMasterOptions } from "@/lib/data";
 import {
   getBreakageInRange,
   getBreakageCost,
@@ -47,10 +47,11 @@ export default async function BreakagePage({
   const resolvedRange = parseGlobalRangeParams(await searchParams);
   const { range, comparison, previousRange } = resolvedRange;
 
-  const [current, previous, departments] = await Promise.all([
+  const [current, previous, departments, masterOptions] = await Promise.all([
     getBreakagePageData(range),
     comparison === "previous" && previousRange ? getBreakagePageData(previousRange) : Promise.resolve(null),
     getDepartments(),
+    getActiveMasterOptions(),
   ]);
 
   const departmentNamesById = new Map(departments.map((d) => [d.department_id, d.name]));
@@ -142,7 +143,11 @@ export default async function BreakagePage({
 
       <BreakageDetailTable rows={detailRows} />
 
-      <BreakageRecordsSection departments={departmentOptions} />
+      <BreakageRecordsSection
+        departments={departmentOptions}
+        breakageItems={masterOptions.breakageItems}
+        reasons={masterOptions.breakageReasons}
+      />
     </PageContainer>
   );
 }

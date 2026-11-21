@@ -26,11 +26,26 @@ interface OperatorPortalProps {
   };
 }
 
-interface ProductOption {
+interface PreparationItemOption {
   id: string;
   name: string;
-  productCode: string;
+  code: string;
   unit: string;
+  departmentId?: string | null;
+}
+
+interface BreakageItemOption {
+  id: string;
+  name: string;
+  code: string;
+  category: string;
+  replacementCost: number | null;
+}
+
+interface ReasonOption {
+  id: string;
+  code: string;
+  label: string;
 }
 
 interface DepartmentOption {
@@ -43,15 +58,16 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
   const router = useRouter();
 
   // Metadata dropdown state
-  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [prepItems, setPrepItems] = useState<PreparationItemOption[]>([]);
+  const [breakageItems, setBreakageItems] = useState<BreakageItemOption[]>([]);
+  const [wastageReasons, setWastageReasons] = useState<ReasonOption[]>([]);
+  const [breakageReasons, setBreakageReasons] = useState<ReasonOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
 
   // Wastage Form State
-  const [wastageDish, setWastageDish] = useState("");
-  const [selectedProductId, setSelectedProductId] = useState<string>("");
-  const [wastagePrepQty, setWastagePrepQty] = useState("");
+  const [selectedItemId, setSelectedItemId] = useState<string>("");
   const [wastageWasteQty, setWastageWasteQty] = useState("");
-  const [wastageReason, setWastageReason] = useState("End-of-day unsold");
+  const [wastageReason, setWastageReason] = useState("");
   const [wastageNotes, setWastageNotes] = useState("");
   const [isSubmittingWastage, setIsSubmittingWastage] = useState(false);
 
@@ -59,7 +75,7 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
   const [breakageItem, setBreakageItem] = useState("");
   const [breakageDeptId, setBreakageDeptId] = useState("");
   const [breakageQty, setBreakageQty] = useState("1");
-  const [breakageReason, setBreakageReason] = useState("Handling damage");
+  const [breakageReason, setBreakageReason] = useState("");
   const [breakageNotes, setBreakageNotes] = useState("");
   const [isSubmittingBreakage, setIsSubmittingBreakage] = useState(false);
 
@@ -74,7 +90,30 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.success) {
-          if (Array.isArray(data.products)) setProducts(data.products);
+          if (Array.isArray(data.preparationItems)) {
+            setPrepItems(data.preparationItems);
+            if (data.preparationItems.length > 0) {
+              setSelectedItemId(data.preparationItems[0].id);
+            }
+          }
+          if (Array.isArray(data.breakageItems)) {
+            setBreakageItems(data.breakageItems);
+            if (data.breakageItems.length > 0) {
+              setBreakageItem(data.breakageItems[0].name);
+            }
+          }
+          if (Array.isArray(data.wastageReasons)) {
+            setWastageReasons(data.wastageReasons);
+            if (data.wastageReasons.length > 0) {
+              setWastageReason(data.wastageReasons[0].label);
+            }
+          }
+          if (Array.isArray(data.breakageReasons)) {
+            setBreakageReasons(data.breakageReasons);
+            if (data.breakageReasons.length > 0) {
+              setBreakageReason(data.breakageReasons[0].label);
+            }
+          }
           if (Array.isArray(data.departments)) {
             setDepartments(data.departments);
             if (data.departments.length > 0) {
@@ -86,6 +125,11 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
       .catch(() => {});
   }, []);
 
+  const selectedPrepItem = prepItems.find((p) => p.id === selectedItemId);
+  const selectedBreakageItem = breakageItems.find(
+    (b) => b.name.toLowerCase() === breakageItem.toLowerCase()
+  );
+
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     toast.success("Logged out successfully");
@@ -95,7 +139,7 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
 
   const handleWastageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!wastageDish || !wastagePrepQty || !wastageWasteQty) {
+    if (!selectedItemId || !wastageWasteQty) {
       toast.error("Please fill in all required fields.");
       return;
     }
@@ -109,9 +153,7 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dish: wastageDish,
-          productId: selectedProductId || undefined,
-          preparedQuantity: parseFloat(wastagePrepQty),
+          itemId: selectedItemId,
           wastedQuantity: parseFloat(wastageWasteQty),
           reason: wastageReason,
           notes: wastageNotes || undefined,
@@ -127,17 +169,14 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
       setRecentLogs((prev) => [
         {
           type: "Wastage",
-          title: data.record?.dish || wastageDish,
-          qty: `${wastageWasteQty} portion(s)`,
+          title: selectedPrepItem?.name || "Kitchen Item",
+          qty: `${wastageWasteQty} ${selectedPrepItem?.unit || "units"}`,
           time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
         ...prev,
       ]);
 
-      toast.success(data.message || `Wastage record logged for ${wastageDish}`);
-      setWastageDish("");
-      setSelectedProductId("");
-      setWastagePrepQty("");
+      toast.success(data.message || `Wastage record logged for ${selectedPrepItem?.name}`);
       setWastageWasteQty("");
       setWastageNotes("");
     } catch (err) {
@@ -255,85 +294,72 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
                 <form onSubmit={handleWastageSubmit} className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="dish">Dish / Product Name *</Label>
-                      {products.length > 0 ? (
-                        <div className="space-y-2">
-                          <Input
-                            id="dish"
-                            placeholder="e.g. Masala Dosa, Meals, Sambar"
-                            value={wastageDish}
-                            onChange={(e) => {
-                              setWastageDish(e.target.value);
-                              const matched = products.find(
-                                (p) => p.name.toLowerCase() === e.target.value.toLowerCase()
-                              );
-                              setSelectedProductId(matched ? matched.id : "");
-                            }}
-                            required
-                            disabled={isSubmittingWastage}
-                          />
-                        </div>
-                      ) : (
-                        <Input
-                          id="dish"
-                          placeholder="e.g. Masala Dosa, Meals, Sambar"
-                          value={wastageDish}
-                          onChange={(e) => setWastageDish(e.target.value)}
-                          required
+                      <Label htmlFor="item">Kitchen Preparation Item *</Label>
+                      {prepItems.length > 0 ? (
+                        <Select
+                          value={selectedItemId}
+                          onValueChange={setSelectedItemId}
                           disabled={isSubmittingWastage}
-                        />
+                        >
+                          <SelectTrigger id="item">
+                            <SelectValue placeholder="Select preparation item..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {prepItems.map((item) => (
+                              <SelectItem key={item.id} value={item.id}>
+                                {item.name} ({item.code}) — {item.unit}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="text-xs text-muted-foreground pt-2">
+                          No active preparation items found for your kitchen.
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="reason">Reason for Wastage</Label>
-                      <Select
-                        value={wastageReason}
-                        onValueChange={setWastageReason}
-                        disabled={isSubmittingWastage}
-                      >
-                        <SelectTrigger id="reason">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="End-of-day unsold">End-of-day unsold</SelectItem>
-                          <SelectItem value="Over-preparation">Over-preparation</SelectItem>
-                          <SelectItem value="Kitchen spoiled/burnt">Kitchen spoiled/burnt</SelectItem>
-                          <SelectItem value="Customer returned">Customer returned</SelectItem>
-                          <SelectItem value="Expired / Shelf-life exceeded">Expired / Shelf-life exceeded</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      {wastageReasons.length > 0 ? (
+                        <Select
+                          value={wastageReason}
+                          onValueChange={setWastageReason}
+                          disabled={isSubmittingWastage}
+                        >
+                          <SelectTrigger id="reason">
+                            <SelectValue placeholder="Select reason..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {wastageReasons.map((r) => (
+                              <SelectItem key={r.id} value={r.label}>
+                                {r.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                          No wastage reasons configured by admin.
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="prepQty">Prepared Quantity (Portions/Units) *</Label>
-                      <Input
-                        id="prepQty"
-                        type="number"
-                        min="0.1"
-                        step="any"
-                        placeholder="e.g. 50"
-                        value={wastagePrepQty}
-                        onChange={(e) => setWastagePrepQty(e.target.value)}
-                        required
-                        disabled={isSubmittingWastage}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="wasteQty">Wasted Quantity (Portions/Units) *</Label>
-                      <Input
-                        id="wasteQty"
-                        type="number"
-                        min="0.1"
-                        step="any"
-                        placeholder="e.g. 8"
-                        value={wastageWasteQty}
-                        onChange={(e) => setWastageWasteQty(e.target.value)}
-                        required
-                        disabled={isSubmittingWastage}
-                      />
-                    </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wasteQty">
+                      Wasted Quantity ({selectedPrepItem?.unit || "units"}) *
+                    </Label>
+                    <Input
+                      id="wasteQty"
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      placeholder={`e.g. 2.5 ${selectedPrepItem?.unit || "units"}`}
+                      value={wastageWasteQty}
+                      onChange={(e) => setWastageWasteQty(e.target.value)}
+                      required
+                      disabled={isSubmittingWastage}
+                    />
                   </div>
 
                   <div className="space-y-1.5">
@@ -376,15 +402,34 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
                 <form onSubmit={handleBreakageSubmit} className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="item">Broken Item Name *</Label>
-                      <Input
-                        id="item"
-                        placeholder="e.g. Dinner Plate, Water Glass, Tea Cup"
-                        value={breakageItem}
-                        onChange={(e) => setBreakageItem(e.target.value)}
-                        required
-                        disabled={isSubmittingBreakage}
-                      />
+                      <Label htmlFor="item">Breakage Item *</Label>
+                      {breakageItems.length > 0 ? (
+                        <Select
+                          value={breakageItem}
+                          onValueChange={setBreakageItem}
+                          disabled={isSubmittingBreakage}
+                        >
+                          <SelectTrigger id="item">
+                            <SelectValue placeholder="Select breakage item..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {breakageItems.map((item) => (
+                              <SelectItem key={item.id} value={item.name}>
+                                {item.name} ({item.code}) — {item.category}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                          No active breakage items configured by admin.
+                        </div>
+                      )}
+                      {selectedBreakageItem && selectedBreakageItem.replacementCost !== null && (
+                        <p className="text-xs text-muted-foreground">
+                          Standard Cost: <span className="font-medium text-foreground">₹{selectedBreakageItem.replacementCost}</span>
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="dept">Department *</Label>
@@ -431,21 +476,32 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="breakReason">Reason</Label>
-                      <Select
-                        value={breakageReason}
-                        onValueChange={setBreakageReason}
-                        disabled={isSubmittingBreakage}
-                      >
-                        <SelectTrigger id="breakReason">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Handling damage">Handling damage</SelectItem>
-                          <SelectItem value="Dropped">Dropped by steward/customer</SelectItem>
-                          <SelectItem value="Damaged during washing">Damaged during washing</SelectItem>
-                          <SelectItem value="Chipped/Cracked">Chipped/Cracked (wear & tear)</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      {breakageReasons.length > 0 ? (
+                        <Select
+                          value={breakageReason}
+                          onValueChange={setBreakageReason}
+                          disabled={isSubmittingBreakage}
+                        >
+                          <SelectTrigger id="breakReason">
+                            <SelectValue placeholder="Select reason..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {breakageReasons.map((r) => (
+                              <SelectItem key={r.id} value={r.label}>
+                                {r.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          id="breakReason"
+                          placeholder="e.g. Handling damage"
+                          value={breakageReason}
+                          onChange={(e) => setBreakageReason(e.target.value)}
+                          disabled={isSubmittingBreakage}
+                        />
+                      )}
                     </div>
                   </div>
 

@@ -69,9 +69,10 @@ export async function getWastage(options?: WastageFilterOptions): Promise<Wastag
     const records = await prisma.wastageRecord.findMany({
       where: whereClause,
       include: {
-        product: {
+        preparationItem: {
           select: {
-            productCode: true,
+            code: true,
+            name: true,
             unit: true,
           },
         },
@@ -88,12 +89,12 @@ export async function getWastage(options?: WastageFilterOptions): Promise<Wastag
       return {
         wastage_id: r.id,
         date: dateStr,
-        product_id: r.product?.productCode || r.productId,
+        product_id: r.preparationItem?.code || r.preparationItemId,
         quantity: Number(r.wastedQuantity),
-        unit: r.product?.unit || "portion",
+        unit: r.preparationItem?.unit || "portion",
         reason: r.reason,
         estimated_cost: estimatedCost,
-        department_id: "Kitchen", // Wastage records are kitchen-originated
+        department_id: r.departmentId || "Kitchen",
       };
     });
   } catch (error) {

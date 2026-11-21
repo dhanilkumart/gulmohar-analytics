@@ -10,7 +10,7 @@ import { DataTable, type Column } from "@/components/dashboard/data-table";
 import { RecordActions } from "@/components/dashboard/record-actions";
 import { RecordDetailDialog } from "@/components/dashboard/record-detail-dialog";
 import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
-import { BreakageFormDialog } from "@/components/dashboard/breakage-form-dialog";
+import { BreakageFormDialog, type BreakageItemOption, type BreakageReasonOption } from "@/components/dashboard/breakage-form-dialog";
 import { inr, num } from "@/lib/format";
 
 export interface DepartmentOption {
@@ -35,7 +35,15 @@ export interface BreakageRecordItem {
 
 export type LocalBreakageRecord = BreakageRecordItem;
 
-export function BreakageRecordsSection({ departments }: { departments: DepartmentOption[] }) {
+export function BreakageRecordsSection({
+  departments,
+  breakageItems = [],
+  reasons = [],
+}: {
+  departments: DepartmentOption[];
+  breakageItems?: BreakageItemOption[];
+  reasons?: BreakageReasonOption[];
+}) {
   const searchParams = useSearchParams();
   const currentOutletId = searchParams.get("outletId");
 
@@ -260,6 +268,8 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
         }}
         initial={editing}
         departments={departments}
+        breakageItems={breakageItems}
+        reasons={reasons}
         onSave={saveRecord}
       />
 
@@ -276,7 +286,6 @@ export function BreakageRecordsSection({ departments }: { departments: Departmen
                 { label: "Department", value: viewing.departmentName },
                 { label: "Quantity", value: num(viewing.quantity) },
                 { label: "Cost", value: viewing.cost !== null && viewing.cost !== undefined ? inr(viewing.cost) : "—" },
-                { label: "Outlet", value: viewing.outletCode ?? "—" },
                 { label: "Recorded By", value: viewing.recordedBy ?? "—" },
                 { label: "Reason / Notes", value: viewing.reason },
               ]

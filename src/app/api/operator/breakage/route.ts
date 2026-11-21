@@ -131,11 +131,29 @@ export async function POST(request: Request) {
       }
     }
 
-    // 6. Server-Side Financial Calculation (Never trusted from client)
-    const lowerItem = sanitizedItem.toLowerCase();
-    const matchedUnitCost = STANDARD_ITEM_REPLACEMENT_COSTS[lowerItem] ?? 100.0; // Default replacement baseline ₹100
-    const unitCost = new Prisma.Decimal(matchedUnitCost);
-    const totalCost = unitCost.mul(new Prisma.Decimal(qtyNum));
+    // 6. Server-Side Financial Calculation from BreakageItem Master
+    const breakageItemMaster = await prisma.breakageItem.findFirst({
+      where: {
+        organizationId: user.organizationId,
+        name: { equals: sanitizedItem, mode: "insensitive" },
+        isActive: true,
+      },
+    });
+
+    let unitCost: Prisma.Decimal | null = null;
+    let totalCost: Prisma.Decimal | null = null;
+
+    if (breakageItemMaster && breakageItemMaster.replacementCost !== null) {
+      unitCost = breakageItemMaster.replacementCost;
+      totalCost = unitCost.mul(new Prisma.Decimal(qtyNum));
+    } else {
+      const lowerItem = sanitizedItem.toLowerCase();
+      const matchedUnitCost = STANDARD_ITEM_REPLACEMENT_COSTS[lowerItem];
+      if (matchedUnitCost !== undefined) {
+        unitCost = new Prisma.Decimal(matchedUnitCost);
+        totalCost = unitCost.mul(new Prisma.Decimal(qtyNum));
+      }
+    }
 
     // 7. Persist BreakageRecord to PostgreSQL
     const createdRecord = await prisma.breakageRecord.create({
@@ -144,7 +162,7 @@ export async function POST(request: Request) {
         departmentId: targetDepartment.id, // Strictly validated outlet-specific department
         recordedById: user.id, // Strictly authenticated user account
         date: entryDate,
-        item: sanitizedItem,
+        item: breakageItemMaster ? breakageItemMaster.name : sanitizedItem,
         brokenQty: qtyNum,
         unitCost, // Server-computed
         totalCost, // Server-computed
