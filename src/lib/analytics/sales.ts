@@ -508,3 +508,175 @@ export async function getOrderHealth(
     statusBreakdown,
   };
 }
+
+export interface DailySalesKpiPoint {
+  date: string;
+  netSales: number;
+  totalOrders: number;
+  aov: number;
+  itemsSold: number;
+}
+
+export interface DailySalesKpiTrends {
+  points: DailySalesKpiPoint[];
+  hasData: boolean;
+}
+
+/**
+ * Returns actual daily aggregated trends for Sales Analytics KPI mini charts
+ * (Total Sales, Total Orders, Average Order Value, Items Sold).
+ *
+ * Rules:
+ * - Enumerates every calendar day in `range` so days with 0 activity are preserved.
+ * - Total Sales: daily net revenue (Success orders).
+ * - Total Orders: all valid ingested orders (Success, Complimentary, Cancelled, etc.), matching Total Orders KPI.
+ * - AOV: daily net sales divided by successful orders count (or 0 if 0 successful orders).
+ * - Items Sold: daily quantity of items sold from Success orders.
+ * - Respects timezones (Asia/Kolkata date grouping).
+ */
+export async function getDailySalesKpiTrends(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<DailySalesKpiTrends> {
+  const mode = getDataSourceMode();
+  const allDays = enumeratePeriods(range, "day");
+
+  if (mode === "mock") {
+    const [salesInRange, saleItemsInRange] = await Promise.all([
+      getSalesInRange(range, options),
+      getSaleItemsInRange(range, options),
+    ]);
+
+    const salesByDay = sumByPeriod(
+      salesInRange,
+      "day",
+      (s) => s.date,
+      (s) => (s.net_amount !== null ? s.net_amount : 0)
+    );
+    const ordersByDay = sumByPeriod(
+      salesInRange,
+      "day",
+      (s) => s.date,
+      () => 1
+    );
+
+    const billDateMap = new Map(salesInRange.map((s) => [s.bill_id, s.date]));
+    const itemsByDay = new Map<string, number>();
+    for (const item of saleItemsInRange) {
+      const date = billDateMap.get(item.bill_id);
+      if (date) {
+        itemsByDay.set(date, (itemsByDay.get(date) ?? 0) + item.quantity);
+      }
+    }
+
+    let hasNonZero = false;
+    const points: DailySalesKpiPoint[] = allDays.map((d) => {
+      const netSales = salesByDay.get(d) ?? 0;
+      const totalOrders = ordersByDay.get(d) ?? 0;
+      const aov = totalOrders > 0 ? netSales / totalOrders : 0;
+      const itemsSold = itemsByDay.get(d) ?? 0;
+      if (netSales > 0 || totalOrders > 0 || itemsSold > 0) {
+        hasNonZero = true;
+      }
+      return { date: d, netSales, totalOrders, aov, itemsSold };
+    });
+
+    return { points, hasData: hasNonZero && points.length > 0 };
+  }
+
+  // Database mode: PostgreSQL via Prisma
+  try {
+    const orderWhereClause: {
+      outletId?: string;
+      outlet?: {
+        organizationId: string;
+      };
+      orderDate?: {
+        gte?: Date;
+        lte?: Date;
+      };
+    } = {};
+
+    if (options?.organizationId) {
+      orderWhereClause.outlet = { organizationId: options.organizationId };
+    }
+    if (options?.outletId && options.outletId !== "all") {
+      orderWhereClause.outletId = options.outletId;
+    }
+    if (range.from || range.to) {
+      orderWhereClause.orderDate = {};
+      if (range.from) {
+        orderWhereClause.orderDate.gte = new Date(`${range.from}T00:00:00.000Z`);
+      }
+      if (range.to) {
+        orderWhereClause.orderDate.lte = new Date(`${range.to}T23:59:59.999Z`);
+      }
+    }
+
+    const [ordersGrouped, itemRows] = await Promise.all([
+      prisma.salesOrder.groupBy({
+        by: ["orderDate", "status"],
+        where: orderWhereClause,
+        _count: { id: true },
+        _sum: { totalAmount: true },
+      }),
+      prisma.salesOrderItem.findMany({
+        where: {
+          salesOrder: {
+            ...orderWhereClause,
+            status: "Success",
+          },
+        },
+        select: {
+          quantity: true,
+          salesOrder: {
+            select: {
+              orderDate: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const dailyTotalOrders = new Map<string, number>();
+    const dailyNetSales = new Map<string, number>();
+    const dailySuccessOrders = new Map<string, number>();
+
+    for (const group of ordersGrouped) {
+      const d = group.orderDate.toISOString().slice(0, 10);
+      const count = group._count.id;
+      dailyTotalOrders.set(d, (dailyTotalOrders.get(d) ?? 0) + count);
+      if (group.status === "Success") {
+        dailySuccessOrders.set(d, (dailySuccessOrders.get(d) ?? 0) + count);
+        dailyNetSales.set(d, (dailyNetSales.get(d) ?? 0) + (group._sum.totalAmount ? Number(group._sum.totalAmount) : 0));
+      }
+    }
+
+    const dailyItemsSold = new Map<string, number>();
+    for (const item of itemRows) {
+      const d = item.salesOrder.orderDate.toISOString().slice(0, 10);
+      dailyItemsSold.set(d, (dailyItemsSold.get(d) ?? 0) + Number(item.quantity));
+    }
+
+    let hasNonZero = false;
+    const points: DailySalesKpiPoint[] = allDays.map((d) => {
+      const netSales = dailyNetSales.get(d) ?? 0;
+      const totalOrders = dailyTotalOrders.get(d) ?? 0;
+      const successOrders = dailySuccessOrders.get(d) ?? 0;
+      const aov = successOrders > 0 ? netSales / successOrders : 0;
+      const itemsSold = dailyItemsSold.get(d) ?? 0;
+
+      if (netSales > 0 || totalOrders > 0 || itemsSold > 0) {
+        hasNonZero = true;
+      }
+
+      return { date: d, netSales, totalOrders, aov, itemsSold };
+    });
+
+    return { points, hasData: hasNonZero && points.length > 0 };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[DATA_SOURCE=database] Failed to compute daily sales KPI trends: ${message}`);
+  }
+}
+

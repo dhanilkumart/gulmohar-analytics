@@ -1,6 +1,7 @@
-import { BadgePercent, IndianRupee, Package, ReceiptIndianRupee, ReceiptText, ShoppingBag } from "lucide-react";
+import { BadgePercent, ReceiptText } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { DeltaBadge, MetricCard } from "@/components/dashboard/ui-kit";
+import { KpiMiniChart } from "@/components/dashboard/kpi-mini-chart";
 import { RevenueOrderTrendChart, type SalesPerformancePoint } from "@/components/dashboard/revenue-order-trend-chart";
 import { HourlySalesChart } from "@/components/dashboard/hourly-sales-chart";
 import { OrderTypeChart } from "@/components/dashboard/order-type-chart";
@@ -21,6 +22,7 @@ import {
   getSalesByPaymentMethod,
   getItemSalesRanking,
   getProductProfitability,
+  getDailySalesKpiTrends,
   comparePeriodValues,
   resolveTrendGranularity,
   type DateRange,
@@ -33,7 +35,7 @@ import {
  * — see the data-contract mapping in the integration report.
  */
 async function getSalesPageData(range: DateRange) {
-  const [salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings] =
+  const [salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings, kpiTrends] =
     await Promise.all([
       getSalesSummary(range),
       getOrderHealth(range),
@@ -45,9 +47,10 @@ async function getSalesPageData(range: DateRange) {
       getProductProfitability(range),
       getCategories(),
       getItemSalesRanking(range),
+      getDailySalesKpiTrends(range),
     ]);
 
-  return { salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings };
+  return { salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings, kpiTrends };
 }
 
 function buildSalesKpiComparisons(
@@ -146,6 +149,13 @@ export default async function SalesPage({
           revenue: product.revenue,
         }));
 
+  // KPI Mini chart series: real daily aggregated data
+  const { points: dailyPoints } = current.kpiTrends;
+  const salesMiniData = dailyPoints.map((p) => ({ date: p.date, value: p.netSales }));
+  const ordersMiniData = dailyPoints.map((p) => ({ date: p.date, value: p.totalOrders }));
+  const aovMiniData = dailyPoints.map((p) => ({ date: p.date, value: p.aov }));
+  const itemsMiniData = dailyPoints.map((p) => ({ date: p.date, value: p.itemsSold }));
+
   return (
     <PageContainer title="Sales Analytics" description="Understand restaurant revenue and order behaviour">
       {/* KPI Overview (Concept A: 4 Primary Cards + Compact Financial Summary) */}
@@ -156,7 +166,15 @@ export default async function SalesPage({
             value={inr(netSales)}
             delta={deltas?.netSales.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
-            icon={IndianRupee}
+            rightSlot={
+              <KpiMiniChart
+                data={salesMiniData}
+                type="area-line"
+                label="Total Sales"
+                valueType="currency"
+                className="h-10 w-full"
+              />
+            }
             gradient="deep-green"
           />
           <MetricCard
@@ -164,7 +182,15 @@ export default async function SalesPage({
             value={num(totalOrdersCount)}
             delta={deltas?.orderCount.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
-            icon={ReceiptIndianRupee}
+            rightSlot={
+              <KpiMiniChart
+                data={ordersMiniData}
+                type="bar"
+                label="Total Orders"
+                valueType="orders"
+                className="h-10 w-full"
+              />
+            }
             gradient="royal-violet"
           />
           <MetricCard
@@ -172,7 +198,15 @@ export default async function SalesPage({
             value={inr(aov)}
             delta={deltas?.aov.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
-            icon={ShoppingBag}
+            rightSlot={
+              <KpiMiniChart
+                data={aovMiniData}
+                type="line"
+                label="Average Order Value"
+                valueType="currency"
+                className="h-10 w-full"
+              />
+            }
             gradient="ocean-blue"
           />
           <MetricCard
@@ -180,7 +214,15 @@ export default async function SalesPage({
             value={num(itemQuantitySold)}
             delta={deltas?.itemQuantitySold.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
-            icon={Package}
+            rightSlot={
+              <KpiMiniChart
+                data={itemsMiniData}
+                type="bar"
+                label="Items Sold"
+                valueType="items"
+                className="h-10 w-full"
+              />
+            }
             gradient="teal"
           />
         </div>

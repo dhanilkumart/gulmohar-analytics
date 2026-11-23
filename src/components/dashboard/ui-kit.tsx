@@ -134,6 +134,7 @@ export interface MetricCardProps {
   comparisonLabel?: string;
   sub?: string;
   icon?: ComponentType<{ className?: string }>;
+  rightSlot?: ReactNode;
   tone?: Tone;
   highlight?: boolean;
   gradient?: KpiGradientVariant;
@@ -150,6 +151,7 @@ export function MetricCard({
   comparisonLabel,
   sub,
   icon: Icon,
+  rightSlot,
   tone = "neutral",
   highlight = false,
   gradient,
@@ -184,18 +186,51 @@ export function MetricCard({
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <p
-          className={cn(
-            "text-xs font-medium tracking-wide uppercase",
-            highlight && !hasGradient && "text-primary-foreground/70",
-            isWhiteText && "text-white/80",
-            isBlackText && "text-black/75",
-            !highlight && !hasGradient && "text-muted-foreground"
-          )}
-        >
-          {label}
-        </p>
-        {Icon ? (
+        {/* Left Side: Label, Value, Delta */}
+        <div className="min-w-0 flex-1">
+          <p
+            className={cn(
+              "text-xs font-medium tracking-wide uppercase",
+              highlight && !hasGradient && "text-primary-foreground/70",
+              isWhiteText && "text-white/80",
+              isBlackText && "text-black/75",
+              !highlight && !hasGradient && "text-muted-foreground"
+            )}
+          >
+            {label}
+          </p>
+          <p className="num mt-2 text-2xl font-bold tracking-tight lg:text-[1.7rem]">{value}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {typeof delta === "number" ? (
+              <DeltaBadge
+                value={delta}
+                invert={deltaInvert}
+                label={highlight || hasGradient ? undefined : comparisonLabel}
+                className={highlight || hasGradient ? "opacity-95" : undefined}
+              />
+            ) : null}
+            {sub ? (
+              <span
+                className={cn(
+                  "text-xs",
+                  highlight && !hasGradient && "text-primary-foreground/75",
+                  isWhiteText && "text-white/80",
+                  isBlackText && "text-black/75",
+                  !highlight && !hasGradient && "text-muted-foreground"
+                )}
+              >
+                {sub}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Right Side: Mini Chart (occupying approx 40-45% width) or Icon */}
+        {rightSlot ? (
+          <div className="flex h-12 w-[42%] shrink-0 items-center justify-end self-center pl-2">
+            {rightSlot}
+          </div>
+        ) : Icon ? (
           <span
             className={cn(
               "grid h-8 w-8 shrink-0 place-items-center rounded-xl",
@@ -206,30 +241,6 @@ export function MetricCard({
             )}
           >
             <Icon className="h-4 w-4" />
-          </span>
-        ) : null}
-      </div>
-      <p className="num mt-3 text-2xl font-bold tracking-tight lg:text-[1.7rem]">{value}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-        {typeof delta === "number" ? (
-          <DeltaBadge
-            value={delta}
-            invert={deltaInvert}
-            label={highlight || hasGradient ? undefined : comparisonLabel}
-            className={highlight || hasGradient ? "opacity-95" : undefined}
-          />
-        ) : null}
-        {sub ? (
-          <span
-            className={cn(
-              "text-xs",
-              highlight && !hasGradient && "text-primary-foreground/75",
-              isWhiteText && "text-white/80",
-              isBlackText && "text-black/75",
-              !highlight && !hasGradient && "text-muted-foreground"
-            )}
-          >
-            {sub}
           </span>
         ) : null}
       </div>
