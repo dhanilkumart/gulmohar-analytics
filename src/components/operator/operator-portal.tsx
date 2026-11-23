@@ -250,7 +250,7 @@ export function OperatorPortal({ user, outlet }: OperatorPortalProps) {
             </span>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-display text-lg font-bold">Ashirvad Gulmohar</h1>
+                <h1 className="font-display text-lg font-bold">Gulmohar Restaurant</h1>
                 <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
                   {outlet.code}
                 </span>

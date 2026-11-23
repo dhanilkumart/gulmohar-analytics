@@ -88,3 +88,11 @@ export function formatPeriodLabel(period: string): string {
   const [year, month, day] = period.split("-").map(Number);
   return format(new Date(year, month - 1, day), "d MMM");
 }
+
+export function formatTrendAxisLabel(period: string, granularity?: "day" | "week" | "month"): string {
+  const [year, month, day] = period.split("-").map(Number);
+  if (granularity === "month") {
+    return format(new Date(year, month - 1, 1), "MMM yyyy");
+  }
+  return format(new Date(year, month - 1, day), "d MMM");
+}

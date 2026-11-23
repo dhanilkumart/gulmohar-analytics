@@ -13,16 +13,18 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seeds/seed.dev.ts",
-    "db:bootstrap": "node --no-warnings=ExperimentalWarning --experimental-strip-types prisma/seeds/seed.prod.ts"
+    "db:bootstrap": "node --no-warnings=ExperimentalWarning --experimental-strip-types prisma/seeds/seed.prod.ts",
+    "petpooja:sync": "tsx scripts/petpooja-sync.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
     "@prisma/client": "^6.19.3",
-    "@supabase/supabase-js": "^2.119.0",
     "argon2": "^0.45.2",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.6",
     "date-fns": "^4.4.0",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.1.0",
     "lucide-react": "^1.44.0",
     "next": "16.3.4",
     "next-themes": "^0.4.6",

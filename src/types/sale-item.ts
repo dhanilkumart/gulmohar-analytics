@@ -8,6 +8,7 @@ export interface SaleItem {
   sale_item_id: string;
   bill_id: string;
   product_id: string;
+  item_name?: string;
   quantity: number;
   unit_price: number;
   amount: number;

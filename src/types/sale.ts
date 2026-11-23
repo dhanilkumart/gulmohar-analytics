@@ -15,4 +15,5 @@ export interface Sale {
   discount: number | null;
   net_amount: number | null;
   payment_method: string;
+  tax?: number | null;
 }

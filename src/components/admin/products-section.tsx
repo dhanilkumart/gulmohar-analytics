@@ -368,7 +368,7 @@ export function ProductsSection() {
                 <FieldLabel htmlFor="name">Product Name *</FieldLabel>
                 <Input
                   id="name"
-                  placeholder="e.g. Malabar Chicken Dum Biryani"
+                  placeholder="e.g. Special Veg Dum Biryani"
                   value={formData.name}
                   onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                   required

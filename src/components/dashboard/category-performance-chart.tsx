@@ -44,7 +44,10 @@ export function CategoryPerformanceChart({ data }: { data: CategoryPerformancePo
           </ResponsiveContainer>
         </div>
       ) : (
-        <EmptyState message="No sales recorded for the selected period." />
+        <EmptyState
+          title="Menu integration pending"
+          message="Category-wise sales analysis will be available once the restaurant menu and category information are integrated."
+        />
       )}
     </ChartCard>
   );

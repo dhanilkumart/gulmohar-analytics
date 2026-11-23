@@ -5,6 +5,7 @@ import {
   HandCoins,
   Trash2,
   Users,
+  UserCheck,
   GaugeCircle,
   FileBarChart2,
   Database,
@@ -50,6 +51,9 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Administration",
-    items: [{ label: "Master Data", href: "/dashboard/master-data", icon: Database }],
+    items: [
+      { label: "Master Data", href: "/dashboard/master-data", icon: Database },
+      { label: "User Management", href: "/dashboard/users", icon: UserCheck },
+    ],
   },
 ];

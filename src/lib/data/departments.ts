@@ -59,11 +59,24 @@ export async function getDepartments(options?: DepartmentFilterOptions): Promise
       orderBy: { departmentCode: "asc" },
     });
 
-    return departments.map((d) => ({
-      department_id: d.departmentCode || d.id,
-      name: d.name,
-      benchmark_headcount: d.benchmarkHeadcount,
-    }));
+    // Deduplicate by department code across multi-outlet database fixtures
+    // so consuming components (and React keys) receive a distinct list.
+    const seenCodes = new Set<string>();
+    const uniqueDepartments: Department[] = [];
+
+    for (const d of departments) {
+      const code = d.departmentCode || d.id;
+      if (!seenCodes.has(code)) {
+        seenCodes.add(code);
+        uniqueDepartments.push({
+          department_id: code,
+          name: d.name,
+          benchmark_headcount: d.benchmarkHeadcount,
+        });
+      }
+    }
+
+    return uniqueDepartments;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`[DATA_SOURCE=database] Failed to load departments from PostgreSQL: ${message}`);

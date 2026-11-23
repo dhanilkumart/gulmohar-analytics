@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth/scope";
 import { OperatorPortal } from "@/components/operator/operator-portal";
 
 export const metadata = {
-  title: "Operator Portal — Ashirvad Gulmohar",
+  title: "Operator Portal — Gulmohar Restaurant",
   description: "Floor operations data entry for kitchen food waste and tableware breakage.",
 };
 
@@ -18,7 +18,7 @@ export default async function OperatorEntryPage() {
   const activeOutlet = user.assignedOutlets[0] || {
     id: "default",
     code: "KOZ-001",
-    name: "Ashirvad Gulmohar",
+    name: "Gulmohar Restaurant",
     city: "Kozhikode",
   };
 

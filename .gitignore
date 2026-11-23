@@ -48,9 +48,6 @@ next-env.d.ts
 /src/generated/prisma
 
 
-# Supabase local CLI artifacts
-/supabase/.temp/
-
 # Temporary test scripts & output dumps
 /scripts/test-petpooja-pull.ts
 /tmp/

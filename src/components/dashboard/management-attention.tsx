@@ -50,9 +50,9 @@ export function ManagementAttention({
               <p className="num mt-3 text-lg font-bold">{pct(product.marginPercentage, 0)} margin</p>
             </Link>
           ))}
-          {departmentsOverBenchmark.map((dept) => (
+          {departmentsOverBenchmark.map((dept, idx) => (
             <Link
-              key={dept.departmentId}
+              key={`${dept.departmentId}-${idx}`}
               href="/dashboard/manpower"
               className="border-border hover:bg-secondary/70 rounded-2xl border p-4 transition-colors"
             >

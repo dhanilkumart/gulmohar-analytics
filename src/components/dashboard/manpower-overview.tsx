@@ -62,8 +62,8 @@ export function ManpowerOverview({
         </span>
       </div>
       <div className="mt-3 space-y-2">
-        {departments.slice(0, 4).map((dept) => (
-          <div key={dept.departmentId} className="flex items-center gap-3 text-sm">
+        {departments.slice(0, 4).map((dept, idx) => (
+          <div key={`${dept.departmentId}-${idx}`} className="flex items-center gap-3 text-sm">
             <span className="text-muted-foreground min-w-0 flex-1 truncate">{dept.name}</span>
             <span className="num w-16 text-right">
               {dept.actualHeadcount}/{dept.benchmarkHeadcount}

@@ -8,6 +8,7 @@ import { createCachedLoader, getDataSourceMode } from "./reader";
  * Filter options for reading sales from PostgreSQL or mock data.
  */
 export interface SalesFilterOptions {
+  organizationId?: string;
   outletId?: string;
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
@@ -49,6 +50,9 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
     const whereClause: {
       status: string;
       outletId?: string;
+      outlet?: {
+        organizationId: string;
+      };
       orderDate?: {
         gte?: Date;
         lte?: Date;
@@ -56,6 +60,10 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
     } = {
       status: "Success",
     };
+
+    if (options?.organizationId) {
+      whereClause.outlet = { organizationId: options.organizationId };
+    }
 
     if (options?.outletId && options.outletId !== "all") {
       whereClause.outletId = options.outletId;
@@ -76,14 +84,22 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
       orderBy: { orderedAt: "asc" },
     });
 
+    const timeFormatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
     return orders.map((order) => {
       // Format date as YYYY-MM-DD
       const dateStr = order.orderDate.toISOString().split("T")[0];
-      // Format time as HH:MM
-      const timeStr = order.orderedAt.toISOString().substring(11, 16);
+      // Format time as HH:MM in IST (Asia/Kolkata)
+      const timeStr = timeFormatter.format(order.orderedAt);
 
       const grossAmount = order.coreTotal !== null ? Number(order.coreTotal) : null;
       const discount = order.discountTotal !== null ? Number(order.discountTotal) : null;
+      const taxAmount = order.taxTotal !== null ? Number(order.taxTotal) : null;
       // Per business rules: Net sales = gross - discount. If totalAmount exists, use it;
       // otherwise compute gross - discount only if both are known.
       const netAmount = order.totalAmount !== null
@@ -99,6 +115,7 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
         discount: discount,
         net_amount: netAmount,
         payment_method: "Other", // Payment breakdown is deferred; placeholder matches Sale interface string
+        tax: taxAmount,
       };
     });
   } catch (error) {

@@ -4,15 +4,15 @@ import { PageContainer } from "@/components/layout/page-container";
 import { MasterDataDashboard } from "@/components/admin/master-data-dashboard";
 
 export const metadata = {
-  title: "Master Data Management | Ashirvad Gulmohar",
+  title: "Master Data Management | Gulmohar Restaurant",
   description: "Admin Master Data Management for Departments, Products, Ingredients, Recipes, Breakage Items, and Reasons",
 };
 
 export default async function MasterDataPage() {
   const user = await requireUser();
 
-  // Defense-in-depth: only admin can access this page
-  if (user.role !== "admin") {
+  // Defense-in-depth: admin and manager (CEO) can access master data
+  if (user.role !== "admin" && user.role !== "manager") {
     redirect("/dashboard/wastage");
   }
 

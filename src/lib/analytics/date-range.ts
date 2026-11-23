@@ -21,6 +21,7 @@ export type DateRangePreset =
   | "today"
   | "yesterday"
   | "last7Days"
+  | "last30Days"
   | "thisWeek"
   | "lastWeek"
   | "thisMonth"
@@ -109,6 +110,9 @@ export function resolveDateRange(
     case "last7Days":
       return { from: toISODate(addDays(today, -6)), to: toISODate(today) };
 
+    case "last30Days":
+      return { from: toISODate(addDays(today, -29)), to: toISODate(today) };
+
     case "thisWeek": {
       const start = startOfWeek(today);
       return { from: toISODate(start), to: toISODate(today) };
@@ -174,26 +178,32 @@ function daysInRange(range: DateRange): number {
 // Trend bucketing (shared by every "*Trend" analytics function)
 // ---------------------------------------------------------------------------
 
-export type TrendGranularity = "day" | "week";
+export type TrendGranularity = "day" | "week" | "month";
 
 /**
  * Picks a bucket size for a trend chart based on the span of the range:
- * daily buckets stay readable up to ~31 days; longer ranges switch to
- * weekly (Monday-anchored, consistent with the "This Week"/"Last Week"
- * presets above) so e.g. a full-year range doesn't render 365 points.
+ * - <= 31 days: daily buckets
+ * - 32 to 120 days: weekly buckets (Monday-anchored)
+ * - > 120 days: monthly buckets (1st of month)
  * This is a charting-readability default, not a business rule — every
  * trend function accepts an explicit `granularity` override instead of
  * always relying on this.
  */
 export function resolveTrendGranularity(range: DateRange): TrendGranularity {
-  return daysInRange(range) > 31 ? "week" : "day";
+  const days = daysInRange(range);
+  if (days <= 31) return "day";
+  if (days <= 120) return "week";
+  return "month";
 }
 
 /** Buckets an ISO date string ("YYYY-MM-DD") into its trend period key. */
 export function getPeriodKey(date: string, granularity: TrendGranularity): string {
   if (granularity === "day") return date;
   const parsed = new Date(`${date}T00:00:00Z`);
-  return toISODate(startOfWeek(parsed));
+  if (granularity === "week") {
+    return toISODate(startOfWeek(parsed));
+  }
+  return toISODate(startOfMonth(parsed));
 }
 
 /**

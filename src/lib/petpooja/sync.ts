@@ -258,5 +258,46 @@ export class PetpoojaSyncOrchestrator {
       durationMs: Date.now() - startTime,
     };
   }
+
+  /**
+   * Synchronizes orders sequentially across an arbitrary date range (inclusive).
+   *
+   * @param fromDate Start operational date (YYYY-MM-DD)
+   * @param toDate End operational date (YYYY-MM-DD)
+   * @param options Sync options
+   */
+  public async syncDateRange(
+    fromDate: string,
+    toDate: string,
+    options?: SyncOptions
+  ): Promise<PetpoojaSyncResult[]> {
+    const from = new Date(`${fromDate}T00:00:00.000Z`);
+    const to = new Date(`${toDate}T00:00:00.000Z`);
+
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      throw new Error(`Invalid date format for sync range: '${fromDate}' to '${toDate}'. Expected YYYY-MM-DD.`);
+    }
+
+    if (from > to) {
+      throw new Error(`Start date '${fromDate}' cannot be after end date '${toDate}'.`);
+    }
+
+    const results: PetpoojaSyncResult[] = [];
+    const current = new Date(from);
+
+    while (current <= to) {
+      const dateStr = current.toISOString().split("T")[0];
+      const result = await this.syncDate(dateStr, options);
+      results.push(result);
+
+      if (!result.success && options?.abortOnFatal) {
+        break;
+      }
+
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+
+    return results;
+  }
 }
 

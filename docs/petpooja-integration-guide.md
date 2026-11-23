@@ -1,5 +1,10 @@
 # Petpooja Integration Guide: Gulmohar Analytics
 
+> [!NOTE]
+> **Architecture Status Note (Updated November 2026):**
+> This document originally detailed the initial Phase 1 technical exploration which evaluated inbound Petpooja push webhooks with Supabase staging (`public.petpooja_webhook_events`).
+> **Current Architecture:** The production system has decoupled from Supabase and transitioned completely to pull-based synchronization (`PetpoojaSyncOrchestrator` / Generic Get Orders API) writing transactionally to self-hosted PostgreSQL via Prisma. Sections referencing Supabase, `/api/webhooks/petpooja`, or `public.petpooja_webhook_events` below are preserved for historical audit purposes only.
+
 This guide details the integration configuration, webhook sharing process, Supabase persistence layer, payload verification, testing steps, and the migration roadmap for Petpooja POS APIs.
 
 ---

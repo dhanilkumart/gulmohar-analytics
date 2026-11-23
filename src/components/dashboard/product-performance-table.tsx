@@ -55,7 +55,11 @@ export function ProductPerformanceTable({ rows }: { rows: ProductSalesRow[] }) {
       key: "category",
       header: "Category",
       sortValue: (r) => r.categoryName,
-      cell: (r) => <span className="text-muted-foreground">{r.categoryName}</span>,
+      cell: (r) => (
+        <span className="text-muted-foreground">
+          {r.categoryName && r.categoryName !== "—" ? r.categoryName : "—"}
+        </span>
+      ),
     },
     {
       key: "qty",

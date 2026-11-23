@@ -356,7 +356,7 @@ Complete route inventories, action permissions, department linkages, security ha
 - **Production (Hostinger KVM2 VPS):**
   - Self-hosted PostgreSQL 16 on Hostinger KVM2 VPS.
   - Release deployments execute `npm run db:deploy` (`npx prisma migrate deploy`), idempotently executing committed migration history.
-- **Supabase Role:** Staging receiver for external POS webhooks only; not the primary application analytics database.
+- **Database Architecture:** Single PostgreSQL database managed via Prisma ORM for all transactional and analytics operations. (Supabase was historically used for early webhook exploratory staging, but has been completely removed).
 - **Seeding:** Strict separation between `seed.dev.ts` (mock fixtures) and `seed.prod.ts` (org, outlets, admin credentials). Local test data is never transferred to production.
 
 ### 10.6 Petpooja Multi-Outlet POS Mapping & Quarantine Pipeline
@@ -473,7 +473,7 @@ Complete route inventories, action permissions, department linkages, security ha
 *Status: Audit Completed (November 2026)*
 
 ### 14.1 Existing Architectural Readiness
-- **Ingress Layer:** Global API push webhook (`/api/webhooks/petpooja`) safely receives real-time order payloads and stores the complete raw JSON in Supabase `public.petpooja_webhook_events`. PII (customer phones, GSTIN, addresses) is masked before console logging.
+- **Ingress Layer:** Batch pull synchronization (`PetpoojaSyncOrchestrator`) pulls orders via the Generic Get Orders API, normalizes data, and transactionally persists orders and line items directly into PostgreSQL `sales_orders` and `sales_order_items`. (The early exploration push webhook `/api/webhooks/petpooja` and Supabase staging table have been removed).
 - **Relational Domain Models:** The application PostgreSQL database defines `SalesOrder` (`sales_orders`) and `SalesOrderItem` (`sales_order_items`) linked to `outlets` and `products`.
 - **Analytics Separation:** The dashboard sales and profitability calculation engines (`src/lib/analytics/sales.ts`, `src/lib/analytics/profitability.ts`) consume normalized order metrics (`grossSales`, `netSales`, `discount`, `unitPrice`, `quantity`, `foodCost`).
 
@@ -508,8 +508,8 @@ Complete route inventories, action permissions, department linkages, security ha
   - Zero-Tolerance Silent Fallback: In database mode, any query failure throws an explicit `[DATA_SOURCE=database]` error; never silently returns mock data.
 
 ### 14.5 Gaps Remaining Prior to Live Ingestion
-1. **Live Ingestion Logic:** Neither Get Orders pull client nor Supabase-to-PostgreSQL normalization worker is yet connected to write into `sales_orders`.
-2. **Date Range Clarification:** Awaiting Petpooja API documentation confirmation on whether Get Orders API supports single-day queries or requires specific from_date/to_date ranges.
+1. **Live Ingestion Logic:** Generic Get Orders pull sync client (`PetpoojaSyncOrchestrator`) is implemented and connects directly to PostgreSQL via Prisma.
+2. **Date Range Clarification:** Pull API operates on operational business day queries (`YYYY-MM-DD`).
 3. **API Key Provisioning:** Live Petpooja production credentials for Kozhikode (`9780nusx`) pending activation.
 
 ### 14.7 Operational Data Loaders (Task 7 Completed)

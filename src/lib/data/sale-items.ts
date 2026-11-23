@@ -36,6 +36,9 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
     const orderWhereClause: {
       status: string;
       outletId?: string;
+      outlet?: {
+        organizationId: string;
+      };
       orderDate?: {
         gte?: Date;
         lte?: Date;
@@ -43,6 +46,10 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
     } = {
       status: "Success",
     };
+
+    if (options?.organizationId) {
+      orderWhereClause.outlet = { organizationId: options.organizationId };
+    }
 
     if (options?.outletId && options.outletId !== "all") {
       orderWhereClause.outletId = options.outletId;
@@ -89,6 +96,7 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
         sale_item_id: item.id,
         bill_id: item.salesOrder.petpoojaOrderId,
         product_id: productId,
+        item_name: item.itemName,
         quantity,
         unit_price: unitPrice,
         amount,

@@ -54,7 +54,7 @@ export default function LoginPage() {
             <span className="font-display text-lg font-bold">AG</span>
           </div>
           <CardTitle className="font-display text-2xl font-bold tracking-tight">
-            Ashirvad Gulmohar
+            Gulmohar Restaurant
           </CardTitle>
           <CardDescription className="text-sm">
             Restaurant Analytics & Operations Management

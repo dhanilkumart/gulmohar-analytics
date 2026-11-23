@@ -13,9 +13,9 @@ function Brand({ collapsed }: { collapsed?: boolean }) {
       {!collapsed ? (
         <div className="min-w-0">
           <p className="font-display truncate text-sm leading-4 font-extrabold">
-            ASHIRVAD
-            <br />
             GULMOHAR
+            <br />
+            RESTAURANT
           </p>
           <p className="text-muted-foreground mt-1 truncate text-[11px]">
             Restaurant Analytics

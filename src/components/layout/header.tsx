@@ -51,7 +51,7 @@ export function Header() {
       </Sheet>
 
       <div className="min-w-0 flex-1 lg:hidden">
-        <p className="font-display truncate text-sm font-extrabold">ASHIRVAD GULMOHAR</p>
+        <p className="font-display truncate text-sm font-extrabold">GULMOHAR RESTAURANT</p>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">

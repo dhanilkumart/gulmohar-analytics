@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ashirvad Gulmohar | Restaurant Intelligence",
+  title: "Gulmohar Restaurant | Restaurant Intelligence",
   description:
-    "Restaurant intelligence dashboard for Ashirvad Gulmohar — sales, profitability, wastage and manpower analytics.",
+    "Restaurant intelligence dashboard for Gulmohar Restaurant — sales, profitability, wastage and manpower analytics.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

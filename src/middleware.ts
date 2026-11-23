@@ -6,7 +6,6 @@ import { unsealSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
-  "/api/webhooks/petpooja",
   "/favicon.ico",
 ];
 

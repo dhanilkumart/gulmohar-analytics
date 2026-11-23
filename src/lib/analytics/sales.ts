@@ -1,7 +1,10 @@
 import "server-only";
 
 import { getSales, getSaleItems } from "@/lib/data";
+import { prisma } from "@/lib/db/client";
+import { getDataSourceMode } from "@/lib/data/reader";
 import type { Sale, SaleItem } from "@/types";
+import type { SalesFilterOptions } from "@/lib/data/sales";
 import {
   filterByDateRange,
   resolveTrendGranularity,
@@ -17,16 +20,41 @@ export interface SalesSummary {
   grossSales: number | null;
   netSales: number | null;
   totalDiscount: number | null;
+  totalTax: number | null;
   itemQuantitySold: number;
   isComplete: boolean;
   incompleteSalesCount: number;
 }
 
-/** Sales (bill headers) within a date range. */
-export async function getSalesInRange(range: DateRange): Promise<Sale[]> {
+export interface OrderHealthStatusCount {
+  status: string;
+  label: string;
+  count: number;
+  percentage: number;
+  totalAmount: number;
+}
+
+export interface OrderHealthMetrics {
+  totalOrders: number;
+  successfulOrders: number;
+  complimentaryOrders: number;
+  cancelledOrders: number;
+  failedOrders: number;
+  cancellationRate: number; // percentage (0 - 100)
+  failureRate: number;      // percentage (0 - 100)
+  statusBreakdown: OrderHealthStatusCount[];
+}
+
+/** Sales (bill headers) within a date range with optional scope. */
+export async function getSalesInRange(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<Sale[]> {
   const sales = await getSales({
     startDate: range.from,
     endDate: range.to,
+    organizationId: options?.organizationId,
+    outletId: options?.outletId,
   });
   return filterByDateRange(sales, range, (sale) => sale.date);
 }
@@ -37,12 +65,17 @@ export async function getSalesInRange(range: DateRange): Promise<Sale[]> {
  * to scope large item-level data without loading everything into a
  * component.
  */
-export async function getSaleItemsInRange(range: DateRange): Promise<SaleItem[]> {
-  const salesInRange = await getSalesInRange(range);
+export async function getSaleItemsInRange(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<SaleItem[]> {
+  const salesInRange = await getSalesInRange(range, options);
   const billIdsInRange = new Set(salesInRange.map((sale) => sale.bill_id));
   const saleItems = await getSaleItems({
     startDate: range.from,
     endDate: range.to,
+    organizationId: options?.organizationId,
+    outletId: options?.outletId,
   });
   return saleItems.filter((item) => billIdsInRange.has(item.bill_id));
 }
@@ -78,6 +111,18 @@ export function getTotalDiscount(sales: Sale[]): number | null {
   return sum;
 }
 
+export function getTotalTax(sales: Sale[]): number | null {
+  let sum = 0;
+  let hasAnyTax = false;
+  for (const sale of sales) {
+    if (sale.tax !== undefined && sale.tax !== null) {
+      sum += sale.tax;
+      hasAnyTax = true;
+    }
+  }
+  return hasAnyTax ? sum : null;
+}
+
 export function getOrderCount(sales: Sale[]): number {
   return sales.length;
 }
@@ -91,10 +136,13 @@ export function getItemQuantitySold(saleItems: SaleItem[]): number {
  * and returns the headline numbers in one call, instead of the page
  * loading raw `Sale[]` itself.
  */
-export async function getSalesSummary(range: DateRange): Promise<SalesSummary> {
+export async function getSalesSummary(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<SalesSummary> {
   const [salesInRange, saleItemsInRange] = await Promise.all([
-    getSalesInRange(range),
-    getSaleItemsInRange(range),
+    getSalesInRange(range, options),
+    getSaleItemsInRange(range, options),
   ]);
 
   const incompleteSalesCount = salesInRange.filter(
@@ -107,6 +155,7 @@ export async function getSalesSummary(range: DateRange): Promise<SalesSummary> {
     grossSales: getGrossSales(salesInRange),
     netSales: getNetSales(salesInRange),
     totalDiscount: getTotalDiscount(salesInRange),
+    totalTax: getTotalTax(salesInRange),
     itemQuantitySold: getItemQuantitySold(saleItemsInRange),
     isComplete: incompleteSalesCount === 0,
     incompleteSalesCount,
@@ -124,9 +173,10 @@ export interface SalesTrendPoint {
  */
 export async function getSalesTrend(
   range: DateRange,
-  granularity: TrendGranularity = resolveTrendGranularity(range)
+  granularity: TrendGranularity = resolveTrendGranularity(range),
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
 ): Promise<SalesTrendPoint[]> {
-  const salesInRange = await getSalesInRange(range);
+  const salesInRange = await getSalesInRange(range, options);
   const sums = sumByPeriod(
     salesInRange,
     granularity,
@@ -147,9 +197,10 @@ export interface OrdersTrendPoint {
 /** Order (bill) count over time — same bucketing as `getSalesTrend`. */
 export async function getOrdersTrend(
   range: DateRange,
-  granularity: TrendGranularity = resolveTrendGranularity(range)
+  granularity: TrendGranularity = resolveTrendGranularity(range),
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
 ): Promise<OrdersTrendPoint[]> {
-  const salesInRange = await getSalesInRange(range);
+  const salesInRange = await getSalesInRange(range, options);
   const sums = sumByPeriod(
     salesInRange,
     granularity,
@@ -173,8 +224,11 @@ export interface SalesByOrderType {
  * derived from whatever values actually appear in the data (currently
  * "Dine-in" | "Delivery" | "Takeaway") rather than a hardcoded list.
  */
-export async function getSalesByOrderType(range: DateRange): Promise<SalesByOrderType[]> {
-  const salesInRange = await getSalesInRange(range);
+export async function getSalesByOrderType(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<SalesByOrderType[]> {
+  const salesInRange = await getSalesInRange(range, options);
   const byType = new Map<string, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
@@ -199,8 +253,11 @@ export interface SalesByPaymentMethod {
  * derived from whatever values actually appear in the data (currently
  * "Cash" | "Card" | "UPI") rather than a hardcoded list.
  */
-export async function getSalesByPaymentMethod(range: DateRange): Promise<SalesByPaymentMethod[]> {
-  const salesInRange = await getSalesInRange(range);
+export async function getSalesByPaymentMethod(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<SalesByPaymentMethod[]> {
+  const salesInRange = await getSalesInRange(range, options);
   const byMethod = new Map<string, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
@@ -229,8 +286,11 @@ export interface HourlySales {
  * `Sale.time`. All 24 hours are returned (zero-filled) so a chart doesn't
  * have gaps for hours with no sales in the range.
  */
-export async function getHourlySales(range: DateRange): Promise<HourlySales[]> {
-  const salesInRange = await getSalesInRange(range);
+export async function getHourlySales(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<HourlySales[]> {
+  const salesInRange = await getSalesInRange(range, options);
   const byHour = new Map<number, { netSales: number; orderCount: number }>();
 
   for (const sale of salesInRange) {
@@ -247,4 +307,204 @@ export async function getHourlySales(range: DateRange): Promise<HourlySales[]> {
     netSales: byHour.get(hour)?.netSales ?? 0,
     orderCount: byHour.get(hour)?.orderCount ?? 0,
   }));
+}
+
+export interface ItemSalesRanking {
+  itemName: string;
+  productId: string;
+  quantitySold: number;
+  revenue: number;
+  averagePrice: number;
+  revenueShare: number;
+}
+
+/**
+ * Item sales ranking grouped directly by item name and product ID.
+ * Works seamlessly with both mapped products and unmapped Petpooja items
+ * (where productId = null / "").
+ */
+export async function getItemSalesRanking(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<ItemSalesRanking[]> {
+  const saleItems = await getSaleItemsInRange(range, options);
+
+  const byName = new Map<
+    string,
+    { itemName: string; productId: string; quantitySold: number; revenue: number }
+  >();
+
+  let totalRevenue = 0;
+
+  for (const item of saleItems) {
+    // Fall back to product_id if item_name is missing (e.g. In mock data)
+    const displayName = item.item_name || item.product_id || "Unknown Item";
+    const existing = byName.get(displayName) ?? {
+      itemName: displayName,
+      productId: item.product_id || "",
+      quantitySold: 0,
+      revenue: 0,
+    };
+
+    existing.quantitySold += item.quantity;
+    existing.revenue += item.amount;
+    if (!existing.productId && item.product_id) {
+      existing.productId = item.product_id;
+    }
+    byName.set(displayName, existing);
+    totalRevenue += item.amount;
+  }
+
+  const items = Array.from(byName.values()).map((entry) => ({
+    itemName: entry.itemName,
+    productId: entry.productId,
+    quantitySold: entry.quantitySold,
+    revenue: entry.revenue,
+    averagePrice: entry.quantitySold > 0 ? entry.revenue / entry.quantitySold : 0,
+    revenueShare: totalRevenue > 0 ? (entry.revenue / totalRevenue) * 100 : 0,
+  }));
+
+  // Sort descending by total revenue
+  return items.sort((a, b) => b.revenue - a.revenue);
+}
+
+/**
+ * Computes Order Health metrics and status distribution for a given date range.
+ *
+ * Business Rules:
+ * - In database mode: Aggregates real Petpooja order statuses from PostgreSQL.
+ *   - Success: Completed, revenue-generating orders.
+ *   - Complimentary: Completed operational orders with ₹0 billed or 100% comp; separated from ordinary sales.
+ *   - Cancelled: Cancelled orders, excluded from completed sales and revenue.
+ *   - Failed: Tracked if distinct 'Failed' status exists in DB; currently 0 in Petpooja dataset.
+ * - In mock mode: All mock sales represent completed successful orders.
+ */
+export async function getOrderHealth(
+  range: DateRange,
+  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+): Promise<OrderHealthMetrics> {
+  const mode = getDataSourceMode();
+
+  if (mode === "mock") {
+    const salesInRange = await getSalesInRange(range, options);
+    const count = salesInRange.length;
+    const totalAmount = salesInRange.reduce((sum, s) => sum + (s.net_amount ?? 0), 0);
+    return {
+      totalOrders: count,
+      successfulOrders: count,
+      complimentaryOrders: 0,
+      cancelledOrders: 0,
+      failedOrders: 0,
+      cancellationRate: 0,
+      failureRate: 0,
+      statusBreakdown: count > 0 ? [
+        {
+          status: "Success",
+          label: "Successful",
+          count,
+          percentage: 100,
+          totalAmount,
+        },
+      ] : [],
+    };
+  }
+
+  // Database mode
+  const whereClause: {
+    outletId?: string;
+    outlet?: {
+      organizationId: string;
+    };
+    orderDate?: {
+      gte?: Date;
+      lte?: Date;
+    };
+  } = {};
+
+  if (options?.organizationId) {
+    whereClause.outlet = { organizationId: options.organizationId };
+  }
+
+  if (options?.outletId && options.outletId !== "all") {
+    whereClause.outletId = options.outletId;
+  }
+
+  if (range.from || range.to) {
+    whereClause.orderDate = {};
+    if (range.from) {
+      whereClause.orderDate.gte = new Date(`${range.from}T00:00:00.000Z`);
+    }
+    if (range.to) {
+      whereClause.orderDate.lte = new Date(`${range.to}T23:59:59.999Z`);
+    }
+  }
+
+  const grouped = await prisma.salesOrder.groupBy({
+    by: ["status"],
+    where: whereClause,
+    _count: { id: true },
+    _sum: { totalAmount: true },
+  });
+
+  let totalOrders = 0;
+  let successfulOrders = 0;
+  let complimentaryOrders = 0;
+  let cancelledOrders = 0;
+  let failedOrders = 0;
+
+  for (const group of grouped) {
+    const count = group._count.id;
+    totalOrders += count;
+    if (group.status === "Success") {
+      successfulOrders += count;
+    } else if (group.status === "Complimentary") {
+      complimentaryOrders += count;
+    } else if (group.status === "Cancelled") {
+      cancelledOrders += count;
+    } else if (group.status === "Failed") {
+      failedOrders += count;
+    }
+  }
+
+  const cancellationRate = totalOrders > 0 ? (cancelledOrders / totalOrders) * 100 : 0;
+  const failureRate = totalOrders > 0 ? (failedOrders / totalOrders) * 100 : 0;
+
+  const statusBreakdown: OrderHealthStatusCount[] = grouped.map((group) => {
+    const count = group._count.id;
+    const pct = totalOrders > 0 ? (count / totalOrders) * 100 : 0;
+    const amount = group._sum.totalAmount !== null ? Number(group._sum.totalAmount) : 0;
+    let label = group.status;
+    if (group.status === "Success") label = "Successful";
+    else if (group.status === "Complimentary") label = "Complimentary";
+    else if (group.status === "Cancelled") label = "Cancelled";
+    else if (group.status === "Failed") label = "Failed";
+
+    return {
+      status: group.status,
+      label,
+      count,
+      percentage: Math.round(pct * 10) / 10,
+      totalAmount: amount,
+    };
+  });
+
+  // Sort breakdown with standard operational order: Success -> Complimentary -> Cancelled -> Failed -> other
+  const statusOrderMap: Record<string, number> = {
+    Success: 1,
+    Complimentary: 2,
+    Cancelled: 3,
+    Failed: 4,
+  };
+  statusBreakdown.sort((a, b) => (statusOrderMap[a.status] ?? 99) - (statusOrderMap[b.status] ?? 99));
+
+  return {
+    totalOrders,
+    successfulOrders,
+    complimentaryOrders,
+    cancelledOrders,
+    failedOrders,
+    cancellationRate: Math.round(cancellationRate * 100) / 100,
+    failureRate: Math.round(failureRate * 100) / 100,
+    statusBreakdown,
+  };
 }
