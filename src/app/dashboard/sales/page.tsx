@@ -157,7 +157,7 @@ export default async function SalesPage({
             delta={deltas?.netSales.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
             icon={IndianRupee}
-            highlight
+            gradient="deep-green"
           />
           <MetricCard
             label="Total Orders"
@@ -165,7 +165,7 @@ export default async function SalesPage({
             delta={deltas?.orderCount.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
             icon={ReceiptIndianRupee}
-            tone="accent"
+            gradient="royal-violet"
           />
           <MetricCard
             label="Average Order Value"
@@ -173,6 +173,7 @@ export default async function SalesPage({
             delta={deltas?.aov.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
             icon={ShoppingBag}
+            gradient="ocean-blue"
           />
           <MetricCard
             label="Items Sold"
@@ -180,6 +181,7 @@ export default async function SalesPage({
             delta={deltas?.itemQuantitySold.percentageChange ?? undefined}
             comparisonLabel={comparisonLabel}
             icon={Package}
+            gradient="teal"
           />
         </div>
 

@@ -103,6 +103,27 @@ export function StatusBadge({
   );
 }
 
+export type KpiGradientVariant =
+  | "deep-green"
+  | "royal-violet"
+  | "ocean-blue"
+  | "teal"
+  | "flame-red"
+  | "burnt-orange"
+  | "saffron-amber"
+  | "rose-pink";
+
+export const kpiGradientBgClasses: Record<KpiGradientVariant, string> = {
+  "deep-green": "bg-kpi-deep-green",
+  "royal-violet": "bg-kpi-royal-violet",
+  "ocean-blue": "bg-kpi-ocean-blue",
+  teal: "bg-kpi-teal",
+  "flame-red": "bg-kpi-flame-red",
+  "burnt-orange": "bg-kpi-burnt-orange",
+  "saffron-amber": "bg-kpi-saffron-amber",
+  "rose-pink": "bg-kpi-rose-pink",
+};
+
 export interface MetricCardProps {
   label: string;
   value: string;
@@ -115,6 +136,8 @@ export interface MetricCardProps {
   icon?: ComponentType<{ className?: string }>;
   tone?: Tone;
   highlight?: boolean;
+  gradient?: KpiGradientVariant;
+  textColor?: "white" | "black";
   loading?: boolean;
   className?: string;
 }
@@ -129,6 +152,8 @@ export function MetricCard({
   icon: Icon,
   tone = "neutral",
   highlight = false,
+  gradient,
+  textColor,
   loading = false,
   className,
 }: MetricCardProps) {
@@ -142,11 +167,19 @@ export function MetricCard({
     );
   }
 
+  const hasGradient = Boolean(gradient);
+  // Default text tone when gradient is applied: white for 1-6 & 8, black for saffron-amber (or explicitly passed textColor)
+  const isWhiteText = textColor ? textColor === "white" : hasGradient && gradient !== "saffron-amber";
+  const isBlackText = textColor ? textColor === "black" : hasGradient && gradient === "saffron-amber";
+
   return (
     <div
       className={cn(
-        "surface-card group p-5 text-left transition-all duration-200",
-        highlight && "bg-primary text-primary-foreground border-primary",
+        "surface-card group p-5 text-left transition-all duration-200 border-border/40",
+        highlight && !hasGradient && "bg-primary text-primary-foreground border-primary",
+        hasGradient && gradient && kpiGradientBgClasses[gradient],
+        isWhiteText && "text-white border-white/20",
+        isBlackText && "text-black border-black/20",
         className
       )}
     >
@@ -154,7 +187,10 @@ export function MetricCard({
         <p
           className={cn(
             "text-xs font-medium tracking-wide uppercase",
-            highlight ? "text-primary-foreground/70" : "text-muted-foreground"
+            highlight && !hasGradient && "text-primary-foreground/70",
+            isWhiteText && "text-white/80",
+            isBlackText && "text-black/75",
+            !highlight && !hasGradient && "text-muted-foreground"
           )}
         >
           {label}
@@ -163,7 +199,10 @@ export function MetricCard({
           <span
             className={cn(
               "grid h-8 w-8 shrink-0 place-items-center rounded-xl",
-              highlight ? "bg-primary-foreground/15" : toneClass[tone]
+              highlight && !hasGradient && "bg-primary-foreground/15",
+              isWhiteText && "bg-white/20 text-white",
+              isBlackText && "bg-black/10 text-black",
+              !highlight && !hasGradient && toneClass[tone]
             )}
           >
             <Icon className="h-4 w-4" />
@@ -176,13 +215,19 @@ export function MetricCard({
           <DeltaBadge
             value={delta}
             invert={deltaInvert}
-            label={highlight ? undefined : comparisonLabel}
-            className={highlight ? "opacity-95" : undefined}
+            label={highlight || hasGradient ? undefined : comparisonLabel}
+            className={highlight || hasGradient ? "opacity-95" : undefined}
           />
         ) : null}
         {sub ? (
           <span
-            className={cn("text-xs", highlight ? "text-primary-foreground/75" : "text-muted-foreground")}
+            className={cn(
+              "text-xs",
+              highlight && !hasGradient && "text-primary-foreground/75",
+              isWhiteText && "text-white/80",
+              isBlackText && "text-black/75",
+              !highlight && !hasGradient && "text-muted-foreground"
+            )}
           >
             {sub}
           </span>

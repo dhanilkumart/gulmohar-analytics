@@ -71,6 +71,16 @@
   /* Card/surface elevation used by the ported `surface-card` utility below. */
   --shadow-card: 0 1px 2px oklch(0.2 0.03 160 / 4%), 0 8px 24px -16px oklch(0.2 0.03 160 / 18%);
   --shadow-pop: 0 12px 40px -18px oklch(0.2 0.03 160 / 28%);
+
+  /* Reusable KPI Card Background Gradient Tokens */
+  --gradient-kpi-deep-green: linear-gradient(140deg, #126849, #0dbe7e);
+  --gradient-kpi-royal-violet: linear-gradient(140deg, #773ac1, #ba58c1);
+  --gradient-kpi-ocean-blue: linear-gradient(140deg, #005bb5, #008ec8);
+  --gradient-kpi-teal: linear-gradient(140deg, #008493, #32ae9b);
+  --gradient-kpi-flame-red: linear-gradient(140deg, #d01c29, #f0532b);
+  --gradient-kpi-burnt-orange: linear-gradient(140deg, #eb5116, #fa7c20);
+  --gradient-kpi-saffron-amber: linear-gradient(140deg, #f88b1c, #fcb442);
+  --gradient-kpi-rose-pink: linear-gradient(140deg, #c22182, #ee5377);
 }
 
 :root {
@@ -166,12 +176,15 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   html {
     @apply font-sans;
   }
+
   /* Typography hierarchy: headings use the same font as body text (Geist,
      already loaded via next/font in layout.tsx — no new font dependency)
      but with the tighter tracking the Lovable design uses for headings. */
@@ -196,4 +209,37 @@
 /* Tabular figures for numeric table/metric cells — ported from the Lovable UI. */
 @utility num {
   font-variant-numeric: tabular-nums;
+}
+
+/* Reusable KPI Card Background Gradient Utilities (Independent of text styling) */
+@utility bg-kpi-deep-green {
+  background-image: var(--gradient-kpi-deep-green);
+}
+
+@utility bg-kpi-royal-violet {
+  background-image: var(--gradient-kpi-royal-violet);
+}
+
+@utility bg-kpi-ocean-blue {
+  background-image: var(--gradient-kpi-ocean-blue);
+}
+
+@utility bg-kpi-teal {
+  background-image: var(--gradient-kpi-teal);
+}
+
+@utility bg-kpi-flame-red {
+  background-image: var(--gradient-kpi-flame-red);
+}
+
+@utility bg-kpi-burnt-orange {
+  background-image: var(--gradient-kpi-burnt-orange);
+}
+
+@utility bg-kpi-saffron-amber {
+  background-image: var(--gradient-kpi-saffron-amber);
+}
+
+@utility bg-kpi-rose-pink {
+  background-image: var(--gradient-kpi-rose-pink);
 }
