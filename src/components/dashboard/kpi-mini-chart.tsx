@@ -171,18 +171,42 @@ export function KpiMiniChart({
             type: "dashed",
           },
         },
-        confine: true, // Prevents clipping outside the card/viewport
-        padding: [6, 8],
-        backgroundColor: "rgba(15, 23, 42, 0.92)", // Slate-900 high contrast
+        position: (pos, _params, _dom, _rect, size) => {
+          if (!pos || !size) return [0, 0];
+          const [cursorX, cursorY] = pos;
+          const [tooltipW, tooltipH] = size.contentSize;
+          const [viewW, viewH] = size.viewSize;
+
+          // Horizontal: center tooltip horizontally relative to cursor, clamp inside view bounds
+          let x = cursorX - tooltipW / 2;
+          if (x < 2) x = 2;
+          if (x + tooltipW > viewW - 2) x = Math.max(2, viewW - tooltipW - 2);
+
+          // Vertical: 10-12px below cursor; if insufficient space below, place above cursor
+          const offset = 10;
+          let y = cursorY + offset;
+          if (y + tooltipH > viewH - 2) {
+            y = cursorY - tooltipH - offset;
+          }
+
+          return [x, y];
+        },
+        confine: false, // Position calculation handles bounding within/around card without clipping
+        padding: [3, 6],
+        backgroundColor: "rgba(15, 23, 42, 0.94)", // Slate-900 high contrast
         borderColor: "rgba(255, 255, 255, 0.15)",
-        borderWidth: 1,
+        borderWidth: 0.5,
         textStyle: {
           color: "#ffffff",
-          fontSize: 11,
+          fontSize: 10,
           fontFamily: "inherit",
+          lineHeight: 12,
         },
-        extraCssText: "box-shadow: 0 4px 12px rgba(0,0,0,0.3); border-radius: 6px; z-index: 50;",
-        formatter: (params: echarts.DefaultLabelFormatterCallbackParams | echarts.DefaultLabelFormatterCallbackParams[]) => {
+        extraCssText:
+          "box-shadow: 0 4px 10px rgba(0,0,0,0.35); border-radius: 4px; z-index: 100; pointer-events: none; width: max-content; min-width: 0; max-width: 180px;",
+        formatter: (
+          params: echarts.DefaultLabelFormatterCallbackParams | echarts.DefaultLabelFormatterCallbackParams[]
+        ) => {
           const p = Array.isArray(params) ? params[0] : params;
           if (!p) return "";
           const dataIndex = p.dataIndex ?? 0;
@@ -190,11 +214,13 @@ export function KpiMiniChart({
           const rawVal = typeof p.value === "number" ? p.value : Number(p.value) || 0;
           const displayVal = formatTooltipValue(rawVal, valueType);
 
-          return `<div style="font-weight: 600; font-size: 10px; color: rgba(255,255,255,0.7); margin-bottom: 2px;">${dateStr}</div>` +
-            `<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">` +
-            `<span style="color: rgba(255,255,255,0.85);">${label}:</span>` +
-            `<span style="font-weight: 700; color: #ffffff;">${displayVal}</span>` +
-            `</div>`;
+          return (
+            `<div style="font-weight: 600; font-size: 9px; color: rgba(255,255,255,0.65); line-height: 1.1; margin-bottom: 2px;">${dateStr}</div>` +
+            `<div style="display: flex; align-items: baseline; gap: 5px; white-space: nowrap; line-height: 1.2;">` +
+            `<span style="color: rgba(255,255,255,0.85); font-size: 10px;">${label}:</span>` +
+            `<span style="font-weight: 700; color: #ffffff; font-size: 10px;">${displayVal}</span>` +
+            `</div>`
+          );
         },
       },
       xAxis: {
