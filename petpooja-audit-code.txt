@@ -1,0 +1,1768 @@
+]633;E;{   for f in     src/lib/petpooja/normalizer.ts     prisma/schema.prisma     src/lib/petpooja/sync.ts     src/lib/petpooja/ingestion-service.ts\x3b do     echo ""\x3b     echo "=================================================="\x3b     echo "FILE: $f"\x3b     echo "=================================================="\x3b     cat "$f"\x3b   done\x3b    echo ""\x3b   echo "=================================================="\x3b   echo "PETPOOJA WEBHOOK FILES"\x3b   echo "=================================================="\x3b   find src/app/api -iname '*petpooja*' -type f 2>/dev/null\x3b } > petpooja-audit-code.txt;9cd04898-20d3-4b3b-a4bc-891638263396]633;C
+==================================================
+FILE: src/lib/petpooja/normalizer.ts
+==================================================
+import { Prisma } from "@prisma/client";
+import {
+  NormalizationIssue,
+  NormalizeBatchResult,
+  NormalizeOrderResult,
+  NormalizedSalesOrder,
+  NormalizedSalesOrderItem,
+  PetpoojaPullOrderEntry,
+  PetpoojaPullOrderItem,
+} from "@/types/petpooja";
+
+/**
+ * Result of parsing a decimal value with issue categorization.
+ */
+interface ParseDecimalResult {
+  value: Prisma.Decimal | null;
+  issue?: NormalizationIssue;
+}
+
+/**
+ * Safely converts an input into a Prisma.Decimal or null.
+ *
+ * Distinguishes:
+ * - Empty / undefined / null: returns { value: null } (optional field absence, no issue).
+ * - Valid string or number: returns { value: Prisma.Decimal } (no issue).
+ * - Malformed string or non-numeric: returns { value: null, issue: NormalizationIssue } with severity.
+ *
+ * Avoids any JavaScript floating point calculations.
+ */
+export function parseDecimalValue(
+  raw: unknown,
+  fieldName: string,
+  isRequired = false
+): ParseDecimalResult {
+  if (raw === null || raw === undefined) {
+    if (isRequired) {
+      return {
+        value: null,
+        issue: {
+          severity: "error",
+          field: fieldName,
+          message: `Required financial field '${fieldName}' is missing or null.`,
+        },
+      };
+    }
+    return { value: null };
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      if (isRequired) {
+        return {
+          value: null,
+          issue: {
+            severity: "error",
+            field: fieldName,
+            message: `Required financial field '${fieldName}' is empty.`,
+            value: raw,
+          },
+        };
+      }
+      return { value: null };
+    }
+
+    // Strict decimal validation: optional leading minus, digits, optional dot with digits
+    if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      return {
+        value: null,
+        issue: {
+          severity: isRequired ? "error" : "warning",
+          field: fieldName,
+          message: `Invalid decimal format for '${fieldName}': '${raw}'.`,
+          value: raw,
+        },
+      };
+    }
+
+    try {
+      return { value: new Prisma.Decimal(trimmed) };
+    } catch {
+      return {
+        value: null,
+        issue: {
+          severity: isRequired ? "error" : "warning",
+          field: fieldName,
+          message: `Failed to construct Decimal for '${fieldName}' from '${raw}'.`,
+          value: raw,
+        },
+      };
+    }
+  }
+
+  if (typeof raw === "number") {
+    if (Number.isNaN(raw) || !Number.isFinite(raw)) {
+      return {
+        value: null,
+        issue: {
+          severity: isRequired ? "error" : "warning",
+          field: fieldName,
+          message: `Invalid number value for '${fieldName}': ${raw}.`,
+          value: raw,
+        },
+      };
+    }
+
+    try {
+      return { value: new Prisma.Decimal(raw.toString()) };
+    } catch {
+      return {
+        value: null,
+        issue: {
+          severity: isRequired ? "error" : "warning",
+          field: fieldName,
+          message: `Failed to construct Decimal for '${fieldName}' from number ${raw}.`,
+          value: raw,
+        },
+      };
+    }
+  }
+
+  // Unsupported type (e.g. object, boolean)
+  return {
+    value: null,
+    issue: {
+      severity: isRequired ? "error" : "warning",
+      field: fieldName,
+      message: `Unexpected data type for '${fieldName}': ${typeof raw}.`,
+      value: raw,
+    },
+  };
+}
+
+/**
+ * Result of parsing and validating an operational date.
+ */
+interface ParseDateResult {
+  dateString?: string;
+  issue?: NormalizationIssue;
+}
+
+/**
+ * Validates operational business date string in YYYY-MM-DD format.
+ * Checks actual calendar validity (leap years, month days).
+ */
+export function parseOperationalDate(raw: unknown, fieldName: string): ParseDateResult {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Missing or non-string operational date for '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  const trimmed = raw.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Invalid operational date format for '${fieldName}'. Expected YYYY-MM-DD, got '${raw}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  if (month < 1 || month > 12) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Month out of range (1-12) in '${fieldName}': ${month}.`,
+        value: raw,
+      },
+    };
+  }
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Day ${day} invalid for month ${month} (has ${daysInMonth} days) in '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  return { dateString: trimmed };
+}
+
+/**
+ * Result of parsing a timestamp in Asia/Kolkata (IST).
+ */
+interface ParseTimestampResult {
+  date?: Date;
+  issue?: NormalizationIssue;
+}
+
+/**
+ * Parses Petpooja `created_on` timestamp as an Asia/Kolkata (UTC+05:30) timestamp.
+ *
+ * Verifies exact calendar components:
+ * - Expected format: "YYYY-MM-DD HH:MM:SS"
+ * - Calendar validity: 1-12 months, valid days per month, 0-23 hours, 0-59 minutes, 0-59 seconds.
+ * - Server timezone independent: Explicitly parses as UTC+05:30 instant.
+ */
+export function parseAsiaKolkataTimestamp(raw: unknown, fieldName: string): ParseTimestampResult {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Missing or non-string timestamp for '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  const trimmed = raw.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(trimmed);
+  if (!match) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Invalid timestamp format for '${fieldName}'. Expected 'YYYY-MM-DD HH:MM:SS', got '${raw}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  const hour = parseInt(match[4], 10);
+  const minute = parseInt(match[5], 10);
+  const second = parseInt(match[6], 10);
+
+  if (month < 1 || month > 12) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Month ${month} out of range in '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Day ${day} invalid for month ${month} in '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Time component out of range in '${fieldName}': ${hour}:${minute}:${second}.`,
+        value: raw,
+      },
+    };
+  }
+
+  // Construct ISO 8601 string explicitly pegged to IST (+05:30)
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const isoWithOffset = `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}+05:30`;
+  const parsedDate = new Date(isoWithOffset);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return {
+      issue: {
+        severity: "error",
+        field: fieldName,
+        message: `Failed to construct valid Date object for '${fieldName}'.`,
+        value: raw,
+      },
+    };
+  }
+
+  return { date: parsedDate };
+}
+
+/**
+ * Normalizes an individual line item (`OrderItem`).
+ *
+ * Rules:
+ * - `itemid`, `itemcode`, `name`, `quantity`, `price`, `total` are required.
+ * - Missing non-critical optional fields (e.g. `specialnotes`, `categoryid`) do not reject the item.
+ * - Invalid decimals on optional fields (like tax or discount) report warnings without rejecting the order.
+ */
+export function normalizeOrderItem(
+  rawItem: PetpoojaPullOrderItem,
+  itemIndex: number
+): { item?: NormalizedSalesOrderItem; issues: NormalizationIssue[] } {
+  const issues: NormalizationIssue[] = [];
+
+  const petpoojaItemId = typeof rawItem.itemid === "string" ? rawItem.itemid.trim() : String(rawItem.itemid ?? "").trim();
+  const petpoojaItemCode = typeof rawItem.itemcode === "string" ? rawItem.itemcode.trim() : String(rawItem.itemcode ?? "").trim();
+  const itemName = typeof rawItem.name === "string" ? rawItem.name.trim() : "";
+
+  if (!petpoojaItemId) {
+    issues.push({
+      severity: "error",
+      field: `OrderItem[${itemIndex}].itemid`,
+      message: `OrderItem at index ${itemIndex} is missing 'itemid'.`,
+    });
+  }
+
+  if (!petpoojaItemCode) {
+    issues.push({
+      severity: "error",
+      field: `OrderItem[${itemIndex}].itemcode`,
+      message: `OrderItem at index ${itemIndex} is missing 'itemcode'.`,
+    });
+  }
+
+  if (!itemName) {
+    issues.push({
+      severity: "error",
+      field: `OrderItem[${itemIndex}].name`,
+      message: `OrderItem at index ${itemIndex} is missing 'name'.`,
+    });
+  }
+
+  // Required Item Financials
+  const qtyResult = parseDecimalValue(rawItem.quantity, `OrderItem[${itemIndex}].quantity`, true);
+  if (qtyResult.issue) issues.push(qtyResult.issue);
+
+  const priceResult = parseDecimalValue(rawItem.price, `OrderItem[${itemIndex}].price`, true);
+  if (priceResult.issue) issues.push(priceResult.issue);
+
+  const totalResult = parseDecimalValue(rawItem.total, `OrderItem[${itemIndex}].total`, true);
+  if (totalResult.issue) issues.push(totalResult.issue);
+
+  // Optional Item Financials
+  const taxResult = parseDecimalValue(rawItem.total_tax, `OrderItem[${itemIndex}].total_tax`, false);
+  if (taxResult.issue) issues.push(taxResult.issue);
+
+  const discountResult = parseDecimalValue(rawItem.total_discount, `OrderItem[${itemIndex}].total_discount`, false);
+  if (discountResult.issue) issues.push(discountResult.issue);
+
+  const hasFatalItemError = issues.some((i) => i.severity === "error");
+  if (hasFatalItemError || !qtyResult.value || !priceResult.value || !totalResult.value) {
+    return { issues };
+  }
+
+  const normalizedItem: NormalizedSalesOrderItem = {
+    itemIndex,
+    petpoojaItemId,
+    petpoojaItemCode,
+    itemName,
+    categoryId: rawItem.categoryid?.trim() || undefined,
+    categoryName: rawItem.categoryname?.trim() || undefined,
+    quantity: qtyResult.value,
+    unitPrice: priceResult.value,
+    totalAmount: totalResult.value,
+    itemTax: taxResult.value,
+    itemDiscount: discountResult.value,
+    specialNotes: rawItem.specialnotes?.trim() || undefined,
+  };
+
+  return { item: normalizedItem, issues };
+}
+
+/**
+ * Normalizes a single raw Petpooja order entry (`PetpoojaPullOrderEntry`).
+ *
+ * Core Guarantees:
+ * 1. Independent of database access or state.
+ * 2. Strictly excludes all Customer PII (name, phone, address, gstin).
+ * 3. Preserves exact Petpooja financial values without modifying or recalculating totals.
+ * 4. Preserves order status, including "Cancelled".
+ * 5. Handles mixed string/number financial types without float rounding.
+ * 6. Explicitly reports validation issues without silent discards.
+ */
+export function normalizePetpoojaOrder(entry: PetpoojaPullOrderEntry): NormalizeOrderResult {
+  const issues: NormalizationIssue[] = [];
+
+  if (!entry || typeof entry !== "object") {
+    return {
+      success: false,
+      issues: [
+        {
+          severity: "error",
+          field: "entry",
+          message: "Order entry must be a non-null object.",
+        },
+      ],
+    };
+  }
+
+  // 1. Restaurant / Outlet Identifier
+  const restID = entry.Restaurant?.restID?.trim();
+  if (!restID) {
+    issues.push({
+      severity: "error",
+      field: "Restaurant.restID",
+      message: "Order entry is missing required 'Restaurant.restID'.",
+    });
+  }
+
+  // 2. Order Header
+  const order = entry.Order;
+  if (!order || typeof order !== "object") {
+    return {
+      success: false,
+      issues: [
+        ...issues,
+        {
+          severity: "error",
+          field: "Order",
+          message: "Order entry is missing required 'Order' object.",
+        },
+      ],
+    };
+  }
+
+  const petpoojaOrderId = typeof order.orderID === "string" ? order.orderID.trim() : String(order.orderID ?? "").trim();
+  if (!petpoojaOrderId) {
+    issues.push({
+      severity: "error",
+      field: "Order.orderID",
+      message: "Order is missing required 'orderID'.",
+    });
+  }
+
+  const refId = typeof order.refId === "string" ? order.refId.trim() : String(order.refId ?? "").trim();
+  if (!refId) {
+    issues.push({
+      severity: "warning",
+      field: "Order.refId",
+      message: "Order has missing or empty 'refId'.",
+    });
+  }
+
+  // 3. Operational Date & Timestamps
+  const dateResult = parseOperationalDate(order.order_date, "Order.order_date");
+  if (dateResult.issue) issues.push(dateResult.issue);
+
+  const timestampResult = parseAsiaKolkataTimestamp(order.created_on, "Order.created_on");
+  if (timestampResult.issue) issues.push(timestampResult.issue);
+
+  // 4. Status & Order Classification
+  const status = typeof order.status === "string" && order.status.trim() ? order.status.trim() : "Success";
+  const orderType = typeof order.order_type === "string" && order.order_type.trim() ? order.order_type.trim() : "Unknown";
+  const subOrderType = typeof order.sub_order_type === "string" && order.sub_order_type.trim() ? order.sub_order_type.trim() : undefined;
+  const orderFrom = typeof order.order_from === "string" && order.order_from.trim() ? order.order_from.trim() : "POS";
+
+  // 5. Financial Totals (Preserving exact reported precision, null when missing)
+  const coreTotalRes = parseDecimalValue(order.core_total, "Order.core_total", false);
+  if (coreTotalRes.issue) issues.push(coreTotalRes.issue);
+
+  const taxTotalRes = parseDecimalValue(order.tax_total, "Order.tax_total", false);
+  if (taxTotalRes.issue) issues.push(taxTotalRes.issue);
+
+  const discountTotalRes = parseDecimalValue(order.discount_total, "Order.discount_total", false);
+  if (discountTotalRes.issue) issues.push(discountTotalRes.issue);
+
+  const totalAmountRes = parseDecimalValue(order.total, "Order.total", false);
+  if (totalAmountRes.issue) issues.push(totalAmountRes.issue);
+
+  const roundOffRes = parseDecimalValue(order.round_off, "Order.round_off", false);
+  if (roundOffRes.issue) issues.push(roundOffRes.issue);
+
+  const serviceChargeRes = parseDecimalValue(order.service_charge, "Order.service_charge", false);
+  if (serviceChargeRes.issue) issues.push(serviceChargeRes.issue);
+
+  const deliveryChargesRes = parseDecimalValue(order.delivery_charges, "Order.delivery_charges", false);
+  if (deliveryChargesRes.issue) issues.push(deliveryChargesRes.issue);
+
+  const containerChargesRes = parseDecimalValue(order.container_charges, "Order.container_charges", false);
+  if (containerChargesRes.issue) issues.push(containerChargesRes.issue);
+
+  // 6. Operational Metadata (Non-PII)
+  const paymentType = typeof order.payment_type === "string" && order.payment_type.trim() ? order.payment_type.trim() : "Other";
+  const customPaymentType = typeof order.custom_payment_type === "string" && order.custom_payment_type.trim() ? order.custom_payment_type.trim() : undefined;
+  const tableNo = typeof order.table_no === "string" && order.table_no.trim() ? order.table_no.trim() : undefined;
+
+  let noOfPersons: number | undefined;
+  if (order.no_of_persons !== undefined && order.no_of_persons !== null) {
+    const rawPersons = String(order.no_of_persons).trim();
+    if (rawPersons !== "") {
+      const parsedInt = parseInt(rawPersons, 10);
+      if (!Number.isNaN(parsedInt) && parsedInt >= 0) {
+        noOfPersons = parsedInt;
+      } else {
+        issues.push({
+          severity: "warning",
+          field: "Order.no_of_persons",
+          message: `Could not parse 'no_of_persons': '${order.no_of_persons}'.`,
+          value: order.no_of_persons,
+        });
+      }
+    }
+  }
+
+  // 7. Order Items
+  const rawItems = entry.OrderItem;
+  const normalizedItems: NormalizedSalesOrderItem[] = [];
+
+  if (!Array.isArray(rawItems)) {
+    issues.push({
+      severity: "error",
+      field: "OrderItem",
+      message: "Order is missing 'OrderItem' array or it is not an array.",
+    });
+  } else if (rawItems.length === 0) {
+    // Some cancelled orders at POS may have 0 items, but active orders should have items
+    if (status !== "Cancelled") {
+      issues.push({
+        severity: "warning",
+        field: "OrderItem",
+        message: "Order has empty 'OrderItem' array.",
+      });
+    }
+  } else {
+    for (let i = 0; i < rawItems.length; i++) {
+      const { item, issues: itemIssues } = normalizeOrderItem(rawItems[i], i);
+      issues.push(...itemIssues);
+      if (item) {
+        normalizedItems.push(item);
+      }
+    }
+  }
+
+  // Determine fatal failure
+  const hasFatalError = issues.some((i) => i.severity === "error");
+  if (hasFatalError || !restID || !petpoojaOrderId || !dateResult.dateString || !timestampResult.date) {
+    return {
+      success: false,
+      issues,
+    };
+  }
+
+  const normalizedOrder: NormalizedSalesOrder = {
+    petpoojaRestId: restID,
+    petpoojaOrderId,
+    refId: refId || "",
+    orderDate: dateResult.dateString,
+    orderedAt: timestampResult.date,
+    orderType,
+    subOrderType,
+    status,
+    orderFrom,
+    coreTotal: coreTotalRes.value,
+    taxTotal: taxTotalRes.value,
+    discountTotal: discountTotalRes.value,
+    totalAmount: totalAmountRes.value,
+    roundOff: roundOffRes.value,
+    paymentType,
+    customPaymentType,
+    tableNo,
+    noOfPersons,
+    serviceCharge: serviceChargeRes.value,
+    deliveryCharges: deliveryChargesRes.value,
+    containerCharges: containerChargesRes.value,
+    items: normalizedItems,
+  };
+
+  return {
+    success: true,
+    order: normalizedOrder,
+    issues,
+  };
+}
+
+/**
+ * Normalizes an array of raw Petpooja order entries.
+ *
+ * Provides summary statistics and aggregates all validation issues.
+ */
+export function normalizePetpoojaBatch(
+  entries: PetpoojaPullOrderEntry[]
+): NormalizeBatchResult {
+  const normalizedOrders: NormalizedSalesOrder[] = [];
+  const issuesList: NormalizeBatchResult["issues"] = [];
+  let successfulCount = 0;
+  let errorCount = 0;
+
+  for (let idx = 0; idx < entries.length; idx++) {
+    const entry = entries[idx];
+    const { success, order, issues } = normalizePetpoojaOrder(entry);
+
+    if (issues.length > 0) {
+      issuesList.push({
+        orderIndex: idx,
+        petpoojaOrderId: entry?.Order?.orderID ? String(entry.Order.orderID) : undefined,
+        issues,
+      });
+    }
+
+    if (success && order) {
+      successfulCount++;
+      normalizedOrders.push(order);
+    } else {
+      errorCount++;
+    }
+  }
+
+  return {
+    totalReceived: entries.length,
+    successfulCount,
+    errorCount,
+    orders: normalizedOrders,
+    issues: issuesList,
+  };
+}
+
+
+==================================================
+FILE: prisma/schema.prisma
+==================================================
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// =============================================================================
+// 1. Organization & Outlet Core
+// =============================================================================
+
+model Organization {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique // e.g. "AG"
+  name      String   // e.g. "Ashirvad Gulmohar"
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlets          Outlet[]
+  users            UserAccount[]
+  categories       Category[]
+  products         Product[]
+  ingredients      Ingredient[]
+  preparationItems PreparationItem[]
+  breakageItems    BreakageItem[]
+  wastageReasons   WastageReason[]
+  breakageReasons  BreakageReason[]
+
+  @@map("organizations")
+}
+
+model Outlet {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   @unique // e.g. "KOZ-001", "KOZ-002", "BLR-001"
+  name           String   // e.g. "Ashirvad Gulmohar - Kozhikode 1"
+  city           String   // Informational: e.g. "Kozhikode"
+  address        String?
+  timezone       String   @default("Asia/Kolkata")
+  petpoojaRestId String?  @unique @map("petpooja_rest_id") // Nullable, verified production ID only
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  userAssignments UserOutletAssignment[]
+  departments     Department[]
+  employees       Employee[]
+  productSettings OutletProductSetting[]
+  preparationLogs PreparationLog[]
+  wastageRecords  WastageRecord[]
+  breakageRecords BreakageRecord[]
+  salesOrders     SalesOrder[]
+
+  @@index([organizationId])
+  @@map("outlets")
+}
+
+// =============================================================================
+// 2. Authentication & Outlet Assignments
+// =============================================================================
+
+enum AppRole {
+  ADMIN    @map("admin")
+  MANAGER  @map("manager")
+  OPERATOR @map("operator")
+}
+
+model UserAccount {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  username       String   @unique // e.g. "admin", "mgr-kozhikode", "op-koz-001"
+  passwordHash   String   @map("password_hash")
+  role           AppRole
+  displayName    String   @map("display_name")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  outletAssignments UserOutletAssignment[]
+  sessions          UserSession[]
+  recordedPreparation PreparationLog[]     @relation("PreparationRecordedBy")
+  recordedWastage   WastageRecord[]        @relation("WastageRecordedBy")
+  recordedBreakage  BreakageRecord[]       @relation("BreakageRecordedBy")
+
+  @@index([organizationId])
+  @@map("user_accounts")
+}
+
+model UserSession {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  sessionTokenHash String @unique @map("session_token_hash") // SHA-256 hash of token/session id
+  ipAddress    String?   @map("ip_address")
+  userAgent    String?   @map("user_agent")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionTokenHash])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+model LoginAttempt {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String   // e.g. "ip:192.168.1.1" or "user:admin"
+  attempts   Int      @default(1)
+  lockUntil  DateTime? @map("lock_until") @db.Timestamptz
+  firstAttemptAt DateTime @default(now()) @map("first_attempt_at") @db.Timestamptz
+  lastAttemptAt  DateTime @default(now()) @map("last_attempt_at") @db.Timestamptz
+
+  @@unique([identifier])
+  @@index([identifier])
+  @@map("login_attempts")
+}
+
+model UserOutletAssignment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  outletId  String   @map("outlet_id") @db.Uuid
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user   UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outlet Outlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, outletId])
+  @@index([userId])
+  @@index([outletId])
+  @@map("user_outlet_assignments")
+}
+
+// =============================================================================
+// 3. Outlet-Specific Departments & Employee Master (Decoupled from Users)
+// =============================================================================
+
+model Department {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId           String   @map("outlet_id") @db.Uuid
+  departmentCode     String   @map("department_code") // e.g. "D01", "D02"
+  name               String   // e.g. "Kitchen", "Service", "Cleaning"
+  benchmarkHeadcount Int      @default(0) @map("benchmark_headcount")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet           Outlet            @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  employees        Employee[]
+  breakageRecords  BreakageRecord[]
+  preparationItems PreparationItem[]
+  preparationLogs  PreparationLog[]
+  wastageRecords   WastageRecord[]
+
+  @@unique([outletId, departmentCode])
+  @@index([outletId])
+  @@map("departments")
+}
+
+model Employee {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId         String   @map("outlet_id") @db.Uuid
+  departmentId     String   @map("department_id") @db.Uuid
+  employeeCode     String   @map("employee_code") // e.g. "E001"
+  name             String   // e.g. "Arun 1"
+  role             String   // e.g. "Cook", "Steward", "Captain"
+  monthlySalary    Decimal  @map("monthly_salary") @db.Decimal(12, 2)
+  employmentStatus String   @default("active") @map("employment_status")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet     Outlet     @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  @@unique([outletId, employeeCode])
+  @@index([outletId])
+  @@index([departmentId])
+  @@map("employees")
+}
+
+// =============================================================================
+// 4. Organization-Level Menu & Recipe Master with Outlet Overrides
+// =============================================================================
+
+model Category {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  categoryCode   String   @map("category_code") // e.g. "C01", "C02"
+  name           String   // e.g. "South Indian", "Breads", "Curries"
+  displayOrder   Int      @default(0) @map("display_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  products     Product[]
+
+  @@unique([organizationId, categoryCode])
+  @@map("categories")
+}
+
+enum PreparationType {
+  BATCH       @map("batch")
+  FRESH_DAILY @map("fresh_daily")
+}
+
+model Product {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String          @map("organization_id") @db.Uuid
+  categoryId          String          @map("category_id") @db.Uuid
+  productCode         String          @map("product_code") // e.g. "P001", "P009"
+  name                String          // e.g. "Masala Dosa", "Meals"
+  defaultSellingPrice Decimal         @map("default_selling_price") @db.Decimal(10, 2)
+  foodCost            Decimal?        @map("food_cost") @db.Decimal(10, 2) // Nullable, never false zero
+  unit                String          @default("portion") // "portion", "piece", "glass"
+  preparationType     PreparationType @default(BATCH) @map("preparation_type")
+  isActive            Boolean         @default(true) @map("is_active")
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  category       Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  recipes        RecipeItem[]
+  outletSettings OutletProductSetting[]
+  orderItems     SalesOrderItem[]
+
+  @@unique([organizationId, productCode])
+  @@index([organizationId, categoryId])
+  @@map("products")
+}
+
+model Ingredient {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  ingredientCode String   @map("ingredient_code") // e.g. "I001"
+  name           String   // e.g. "Rice", "Toor Dal", "Ghee"
+  unit           String   // e.g. "kg", "liter"
+  defaultCost    Decimal  @map("default_cost") @db.Decimal(12, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  recipeItems  RecipeItem[]
+
+  @@unique([organizationId, ingredientCode])
+  @@map("ingredients")
+}
+
+model RecipeItem {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  ingredientId    String   @map("ingredient_id") @db.Uuid
+  quantityPerUnit Decimal  @map("quantity_per_unit") @db.Decimal(10, 4) // e.g. 0.18 kg Rice for Meals
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, ingredientId])
+  @@index([productId])
+  @@map("recipe_items")
+}
+
+model OutletProductSetting {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId         String   @map("outlet_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  priceOverride    Decimal? @map("price_override") @db.Decimal(10, 2) // Nullable; falls back to defaultSellingPrice
+  isAvailable      Boolean  @default(true) @map("is_available")
+  petpoojaItemId   String?  @map("petpooja_item_id") // External POS Item ID mapping per outlet
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet  Outlet  @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([outletId, productId])
+  @@index([outletId])
+  @@map("outlet_product_settings")
+}
+
+// =============================================================================
+// 5. Preparation Items & Operational Logs (Attributed to UserAccount)
+// =============================================================================
+
+model PreparationItem {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  departmentId   String?  @map("department_id") @db.Uuid // Optional kitchen department
+  name           String   // e.g. "Rice", "Sambar", "Coconut Chutney", "Idli Batter"
+  code           String   // e.g. "PREP-001"
+  unit           String   // e.g. "kg", "litre", "portion"
+  standardCost   Decimal? @map("standard_cost") @db.Decimal(12, 2) // Optional unit preparation/food cost
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  department      Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  preparationLogs PreparationLog[]
+  wastageRecords  WastageRecord[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@map("preparation_items")
+}
+
+model PreparationLog {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid
+  date              DateTime @db.Date
+  quantity          Decimal  @db.Decimal(10, 3) // Prepared quantity
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("PreparationRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([outletId, date])
+  @@index([preparationItemId])
+  @@index([recordedById])
+  @@map("preparation_logs")
+}
+
+model WastageRecord {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
+  date              DateTime @db.Date
+  wastedQuantity    Decimal  @map("wasted_quantity") @db.Decimal(10, 3)
+  unitCost          Decimal? @map("unit_cost") @db.Decimal(12, 2) // Server-populated, nullable if not configured
+  estimatedCost     Decimal? @map("estimated_cost") @db.Decimal(12, 2) // Server-computed (wastedQuantity * unitCost)
+  reason            String   // e.g. "Over-preparation", "End-of-day unsold", "Spoilage"
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("WastageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([outletId, date])
+  @@index([preparationItemId])
+  @@index([recordedById])
+  @@map("wastage_records")
+}
+
+model BreakageRecord {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId     String   @map("outlet_id") @db.Uuid
+  departmentId String   @map("department_id") @db.Uuid // Strict FK to departments.id
+  recordedById String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
+  date         DateTime @db.Date
+  item         String   // e.g. "Cup", "Dinner Plate", "Glass"
+  brokenQty    Int      @map("broken_qty")
+  unitCost     Decimal? @map("unit_cost") @db.Decimal(12, 2) // Server-populated, nullable if no replacement cost master exists
+  totalCost    Decimal? @map("total_cost") @db.Decimal(12, 2) // Server-computed, nullable
+  reason       String   // e.g. "Handling damage", "Dropped"
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet     Outlet      @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  department Department  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  recordedBy UserAccount @relation("BreakageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([outletId, date])
+  @@index([departmentId])
+  @@index([recordedById])
+  @@map("breakage_records")
+}
+
+model BreakageItem {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  code            String   // e.g. "BRK-001"
+  name            String   // e.g. "Dinner Plate", "Water Glass", "Tea Cup"
+  category        String   @default("Tableware") // "Tableware", "Glassware", "Cutlery", "Kitchenware"
+  replacementCost Decimal? @map("replacement_cost") @db.Decimal(12, 2)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("breakage_items")
+}
+
+model WastageReason {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "WR-01"
+  label          String   // e.g. "Overproduction", "Spoilage", "Quality Issue"
+  description    String?
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("wastage_reasons")
+}
+
+model BreakageReason {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "BR-01"
+  label          String   // e.g. "Dropped", "Cracked", "Handling damage"
+  description    String?
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("breakage_reasons")
+}
+
+// =============================================================================
+// 6. Normalized POS Sales Orders & Items
+// =============================================================================
+
+model SalesOrder {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId        String   @map("outlet_id") @db.Uuid
+  petpoojaOrderId String   @map("petpooja_order_id")
+  orderDate       DateTime @map("order_date") @db.Date
+  orderedAt       DateTime @map("ordered_at") @db.Timestamptz
+  orderType       String   @map("order_type") // DineIn, Delivery, Takeaway
+  status          String   @default("Success") // Petpooja order status: "Success", "Cancelled"
+  coreTotal       Decimal? @map("core_total") @db.Decimal(12, 2)
+  taxTotal        Decimal? @map("tax_total") @db.Decimal(12, 2)
+  discountTotal   Decimal? @map("discount_total") @db.Decimal(12, 2)
+  totalAmount     Decimal? @map("total_amount") @db.Decimal(12, 2)
+  financialStatus String   @default("pending") @map("financial_status")
+  matchingStatus  String   @default("unmatched") @map("matching_status")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  outlet Outlet           @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  items  SalesOrderItem[]
+
+  @@unique([outletId, petpoojaOrderId])
+  @@index([outletId, orderDate])
+  @@map("sales_orders")
+}
+
+model SalesOrderItem {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesOrderId String   @map("sales_order_id") @db.Uuid
+  productId    String?  @map("product_id") @db.Uuid // Nullable if unmatched to master
+  itemName     String   @map("item_name")
+  quantity     Decimal  @db.Decimal(10, 3)
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(10, 2)
+  totalAmount  Decimal  @map("total_amount") @db.Decimal(12, 2)
+  itemTax      Decimal? @map("item_tax") @db.Decimal(10, 2)
+  itemDiscount Decimal? @map("item_discount") @db.Decimal(10, 2)
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product    Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([salesOrderId])
+  @@index([productId])
+  @@map("sales_order_items")
+}
+
+==================================================
+FILE: src/lib/petpooja/sync.ts
+==================================================
+import {
+  FetchAllOrdersOptions,
+  PetpoojaPaginationResult,
+  PetpoojaPullOrderEntry,
+} from "@/types/petpooja";
+import { PetpoojaGetOrdersClient } from "./get-orders-client";
+import { normalizePetpoojaBatch } from "./normalizer";
+import { PetpoojaResolver } from "./resolver";
+import {
+  IngestionBatchStatistics,
+  IngestionOptions,
+  PetpoojaIngestionService,
+} from "./ingestion-service";
+
+/**
+ * Structured error details captured during synchronization without PII.
+ */
+export interface SyncErrorDetail {
+  stage: "api" | "normalization" | "outlet_resolution" | "ingestion";
+  petpoojaOrderId?: string;
+  field?: string;
+  message: string;
+}
+
+/**
+ * Comprehensive statistics and results returned from a synchronization run.
+ */
+export interface PetpoojaSyncResult {
+  success: boolean;
+  orderDate: string;
+  pagesFetched: number;
+  totalOrdersReceived: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  unmappedItems: number;
+  errors: SyncErrorDetail[];
+  durationMs: number;
+}
+
+/**
+ * Options for configuring synchronization.
+ */
+export interface SyncOptions extends FetchAllOrdersOptions, IngestionOptions {
+  /**
+   * If true, aborts the entire synchronization run if an API or fatal error occurs.
+   * Defaults to false (best-effort processing for individual orders).
+   */
+  abortOnFatal?: boolean;
+}
+
+/**
+ * Petpooja Synchronization Orchestrator (Stage 3D)
+ *
+ * Pipeline Flow:
+ * 1. PetpoojaGetOrdersClient: Fetches all paginated raw order records for a specified operational date.
+ * 2. Normalizer: Converts raw envelopes into typed, PII-free NormalizedSalesOrder objects.
+ * 3. Resolver: Resolves Outlet via `petpoojaRestId` and Products via priority hierarchy.
+ * 4. Ingestion Service: Transactionally upserts SalesOrder headers and atomic line-items.
+ */
+export class PetpoojaSyncOrchestrator {
+  private client: PetpoojaGetOrdersClient;
+  private resolver: PetpoojaResolver;
+  private ingestionService: PetpoojaIngestionService;
+
+  constructor(
+    client?: PetpoojaGetOrdersClient,
+    resolver?: PetpoojaResolver,
+    ingestionService?: PetpoojaIngestionService
+  ) {
+    this.client = client ?? new PetpoojaGetOrdersClient();
+    this.resolver = resolver ?? new PetpoojaResolver();
+    this.ingestionService =
+      ingestionService ?? new PetpoojaIngestionService(undefined, this.resolver);
+  }
+
+  /**
+   * Synchronizes orders for an explicitly requested operational date (YYYY-MM-DD).
+   *
+   * Used identically for:
+   * - Daily synchronization (running post-business hours for day T).
+   * - Historical synchronization (backfilling any historical date).
+   *
+   * @param orderDate Operational business date formatted as "YYYY-MM-DD"
+   * @param options Sync options (pagination limits, timeouts)
+   */
+  public async syncDate(
+    orderDate: string,
+    options?: SyncOptions
+  ): Promise<PetpoojaSyncResult> {
+    const startTime = Date.now();
+    const errors: SyncErrorDetail[] = [];
+
+    // Validate date format strictly
+    const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+    if (!orderDate || !DATE_REGEX.test(orderDate.trim())) {
+      return {
+        success: false,
+        orderDate: orderDate ?? "",
+        pagesFetched: 0,
+        totalOrdersReceived: 0,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        unmappedItems: 0,
+        errors: [
+          {
+            stage: "api",
+            message: `Invalid orderDate format: '${orderDate}'. Expected YYYY-MM-DD.`,
+          },
+        ],
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    const trimmedDate = orderDate.trim();
+
+    // -------------------------------------------------------------------------
+    // Step 1: Fetch all pages using existing API client pagination
+    // -------------------------------------------------------------------------
+    let pullResult: PetpoojaPaginationResult;
+    try {
+      pullResult = await this.client.fetchAllOrders(trimmedDate, options);
+    } catch (apiErr: any) {
+      errors.push({
+        stage: "api",
+        message: apiErr.message || String(apiErr),
+      });
+
+      return {
+        success: false,
+        orderDate: trimmedDate,
+        pagesFetched: 0,
+        totalOrdersReceived: 0,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        unmappedItems: 0,
+        errors,
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    const rawOrders: PetpoojaPullOrderEntry[] = pullResult.orders;
+    const pagesFetched = pullResult.pagesFetched;
+
+    if (rawOrders.length === 0) {
+      return {
+        success: true,
+        orderDate: trimmedDate,
+        pagesFetched,
+        totalOrdersReceived: 0,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        unmappedItems: 0,
+        errors: [],
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Normalize the batch
+    // -------------------------------------------------------------------------
+    const normResult = normalizePetpoojaBatch(rawOrders);
+
+    // Record normalization errors (distinguishing fatal errors vs warnings)
+    for (const issueEntry of normResult.issues) {
+      for (const issue of issueEntry.issues) {
+        if (issue.severity === "error") {
+          errors.push({
+            stage: "normalization",
+            petpoojaOrderId: issueEntry.petpoojaOrderId,
+            field: issue.field,
+            message: issue.message,
+          });
+        }
+      }
+    }
+
+    // If all received orders failed normalization
+    if (normResult.orders.length === 0) {
+      return {
+        success: false,
+        orderDate: trimmedDate,
+        pagesFetched,
+        totalOrdersReceived: rawOrders.length,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: normResult.errorCount,
+        unmappedItems: 0,
+        errors,
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3 & 4: Ingestion (Resolve and Upsert)
+    // -------------------------------------------------------------------------
+    let ingestStats: IngestionBatchStatistics;
+    try {
+      ingestStats = await this.ingestionService.ingestBatch(
+        normResult.orders,
+        options
+      );
+    } catch (ingestErr: any) {
+      errors.push({
+        stage: "ingestion",
+        message: ingestErr.message || String(ingestErr),
+      });
+
+      return {
+        success: false,
+        orderDate: trimmedDate,
+        pagesFetched,
+        totalOrdersReceived: rawOrders.length,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: rawOrders.length,
+        unmappedItems: 0,
+        errors,
+        durationMs: Date.now() - startTime,
+      };
+    }
+
+    // Collect order-level ingestion failures
+    for (const res of ingestStats.results) {
+      if (!res.success) {
+        errors.push({
+          stage: "ingestion",
+          petpoojaOrderId: res.petpoojaOrderId,
+          message: res.error,
+        });
+      }
+    }
+
+    const totalFailed = normResult.errorCount + ingestStats.failed;
+    const hasSuccessfulOrders = ingestStats.created > 0 || ingestStats.updated > 0;
+
+    return {
+      // Overall success is true if at least some orders succeeded and no unhandled crashes occurred
+      success: totalFailed === 0 || hasSuccessfulOrders,
+      orderDate: trimmedDate,
+      pagesFetched,
+      totalOrdersReceived: rawOrders.length,
+      created: ingestStats.created,
+      updated: ingestStats.updated,
+      skipped: ingestStats.skipped,
+      failed: totalFailed,
+      unmappedItems: ingestStats.unmappedItems,
+      errors,
+      durationMs: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Synchronizes orders sequentially across an arbitrary date range (inclusive).
+   *
+   * @param fromDate Start operational date (YYYY-MM-DD)
+   * @param toDate End operational date (YYYY-MM-DD)
+   * @param options Sync options
+   */
+  public async syncDateRange(
+    fromDate: string,
+    toDate: string,
+    options?: SyncOptions
+  ): Promise<PetpoojaSyncResult[]> {
+    const from = new Date(`${fromDate}T00:00:00.000Z`);
+    const to = new Date(`${toDate}T00:00:00.000Z`);
+
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      throw new Error(`Invalid date format for sync range: '${fromDate}' to '${toDate}'. Expected YYYY-MM-DD.`);
+    }
+
+    if (from > to) {
+      throw new Error(`Start date '${fromDate}' cannot be after end date '${toDate}'.`);
+    }
+
+    const results: PetpoojaSyncResult[] = [];
+    const current = new Date(from);
+
+    while (current <= to) {
+      const dateStr = current.toISOString().split("T")[0];
+      const result = await this.syncDate(dateStr, options);
+      results.push(result);
+
+      if (!result.success && options?.abortOnFatal) {
+        break;
+      }
+
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+
+    return results;
+  }
+}
+
+
+==================================================
+FILE: src/lib/petpooja/ingestion-service.ts
+==================================================
+import { PrismaClient } from "@prisma/client";
+import { prisma as defaultPrisma } from "@/lib/db/client";
+import { NormalizedSalesOrder, NormalizedSalesOrderItem } from "@/types/petpooja";
+import {
+  OutletResolutionContext,
+  PetpoojaResolver,
+  ResolvedOutlet,
+} from "./resolver";
+
+/**
+ * Minimal Prisma Transaction interface required by the ingestion service.
+ */
+export type IngestionTransactionClient = {
+  salesOrder: {
+    findUnique: (args: any) => Promise<any>;
+    upsert: (args: any) => Promise<any>;
+  };
+  salesOrderItem: {
+    deleteMany: (args: any) => Promise<any>;
+    createMany: (args: any) => Promise<any>;
+  };
+};
+
+/**
+ * Minimal Prisma interface for executing transactions and queries.
+ */
+export type IngestionPrismaClient = {
+  $transaction: <T>(
+    fn: (tx: IngestionTransactionClient) => Promise<T>,
+    options?: { timeout?: number; maxWait?: number }
+  ) => Promise<T>;
+  salesOrder: IngestionTransactionClient["salesOrder"];
+  salesOrderItem: IngestionTransactionClient["salesOrderItem"];
+};
+
+/**
+ * Result of ingesting a single normalized order.
+ */
+export type OrderIngestionResult =
+  | {
+      success: true;
+      status: "created" | "updated" | "skipped";
+      orderId: string;
+      petpoojaOrderId: string;
+      outletId: string;
+      itemCount: number;
+      unmappedItemCount: number;
+    }
+  | {
+      success: false;
+      status: "failed";
+      petpoojaOrderId: string;
+      outletId?: string;
+      error: string;
+    };
+
+/**
+ * Summary statistics returned after ingesting a batch of orders.
+ */
+export interface IngestionBatchStatistics {
+  totalReceived: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  unmappedItems: number;
+  results: OrderIngestionResult[];
+}
+
+/**
+ * Ingestion options for configuring batch behavior.
+ */
+export interface IngestionOptions {
+  /**
+   * Pre-resolved outlet context to avoid redundant database lookups.
+   */
+  outletContext?: OutletResolutionContext;
+  /**
+   * If true, aborts the entire batch on the first failed order.
+   * Defaults to false (per-order isolation: one failed order does not fail the batch).
+   */
+  stopOnError?: boolean;
+}
+
+/**
+ * Petpooja Sales Order Ingestion Service
+ *
+ * Responsibilities:
+ * 1. Upserts `SalesOrder` headers keyed on `@@unique([outletId, petpoojaOrderId])`.
+ * 2. Manages atomic line-item replacement:
+ *    - Deletes existing `SalesOrderItem` records for the order.
+ *    - Inserts the latest normalized line items with resolved product mappings.
+ * 3. Preserves `productId = null` for unmatched items without failing.
+ * 4. Preserves nullable financial values without inventing false zeros.
+ * 5. Supports cancelled orders and subsequent updates.
+ * 6. Executes each order within an atomic database transaction.
+ */
+export class PetpoojaIngestionService {
+  private prisma: IngestionPrismaClient;
+  private resolver: PetpoojaResolver;
+
+  constructor(
+    prismaClient?: IngestionPrismaClient,
+    resolver?: PetpoojaResolver
+  ) {
+    this.prisma = prismaClient ?? (defaultPrisma as unknown as IngestionPrismaClient);
+    this.resolver = resolver ?? new PetpoojaResolver();
+  }
+
+  /**
+   * Ingests a single normalized order inside a dedicated database transaction.
+   *
+   * @param order Normalized order from Stage 2
+   * @param context Pre-fetched resolution context for the outlet (optional)
+   */
+  public async ingestOrder(
+    order: NormalizedSalesOrder,
+    context?: OutletResolutionContext
+  ): Promise<OrderIngestionResult> {
+    try {
+      // 1. Resolve outlet if context not provided
+      let currentContext = context;
+      let resolvedOutlet: ResolvedOutlet;
+
+      if (currentContext) {
+        resolvedOutlet = currentContext.outlet;
+      } else {
+        const outletRes = await this.resolver.resolveOutlet(order.petpoojaRestId);
+        if (!outletRes.success) {
+          return {
+            success: false,
+            status: "failed",
+            petpoojaOrderId: order.petpoojaOrderId,
+            error: `Failed to resolve outlet for restID '${order.petpoojaRestId}': ${outletRes.message}`,
+          };
+        }
+        resolvedOutlet = outletRes.outlet;
+        currentContext = await this.resolver.buildOutletResolutionContext(resolvedOutlet);
+      }
+
+      // 2. Resolve product items
+      let unmappedItemCount = 0;
+      const resolvedLineItems = order.items.map((item) => {
+        const productRes = this.resolver.resolveProductWithContext(currentContext!, {
+          petpoojaItemId: item.petpoojaItemId,
+          petpoojaItemCode: item.petpoojaItemCode,
+          itemName: item.itemName,
+        });
+
+        if (!productRes.productId) {
+          unmappedItemCount++;
+        }
+
+        return {
+          productId: productRes.productId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalAmount: item.totalAmount,
+          itemTax: item.itemTax,
+          itemDiscount: item.itemDiscount,
+        };
+      });
+
+      const matchingStatus =
+        unmappedItemCount === 0
+          ? "matched"
+          : unmappedItemCount === order.items.length
+          ? "unmatched"
+          : "partially_matched";
+
+      // 3. Execute atomic upsert and line-item replacement in a transaction
+      const result = await this.prisma.$transaction(async (tx) => {
+        // Check whether the order already exists to determine created vs updated
+        const existing = await tx.salesOrder.findUnique({
+          where: {
+            outletId_petpoojaOrderId: {
+              outletId: resolvedOutlet.outletId,
+              petpoojaOrderId: order.petpoojaOrderId,
+            },
+          },
+          select: { id: true },
+        });
+
+        const isUpdate = Boolean(existing);
+
+        // Date conversions:
+        // orderDate is stored as midnight UTC Date (PostgreSQL @db.Date)
+        const orderDateObj = new Date(`${order.orderDate}T00:00:00.000Z`);
+
+        // Upsert SalesOrder header
+        const salesOrder = await tx.salesOrder.upsert({
+          where: {
+            outletId_petpoojaOrderId: {
+              outletId: resolvedOutlet.outletId,
+              petpoojaOrderId: order.petpoojaOrderId,
+            },
+          },
+          create: {
+            outletId: resolvedOutlet.outletId,
+            petpoojaOrderId: order.petpoojaOrderId,
+            orderDate: orderDateObj,
+            orderedAt: order.orderedAt,
+            orderType: order.orderType,
+            status: order.status,
+            coreTotal: order.coreTotal,
+            taxTotal: order.taxTotal,
+            discountTotal: order.discountTotal,
+            totalAmount: order.totalAmount,
+            financialStatus: "reconciled",
+            matchingStatus,
+          },
+          update: {
+            orderDate: orderDateObj,
+            orderedAt: order.orderedAt,
+            orderType: order.orderType,
+            status: order.status,
+            coreTotal: order.coreTotal,
+            taxTotal: order.taxTotal,
+            discountTotal: order.discountTotal,
+            totalAmount: order.totalAmount,
+            financialStatus: "reconciled",
+            matchingStatus,
+          },
+        });
+
+        // Atomic child replacement:
+        // 1. Delete existing line items for this order
+        await tx.salesOrderItem.deleteMany({
+          where: { salesOrderId: salesOrder.id },
+        });
+
+        // 2. Insert refreshed line items
+        if (resolvedLineItems.length > 0) {
+          await tx.salesOrderItem.createMany({
+            data: resolvedLineItems.map((item) => ({
+              salesOrderId: salesOrder.id,
+              productId: item.productId,
+              itemName: item.itemName,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalAmount: item.totalAmount,
+              itemTax: item.itemTax,
+              itemDiscount: item.itemDiscount,
+            })),
+          });
+        }
+
+        return {
+          salesOrderId: salesOrder.id,
+          isUpdate,
+        };
+      });
+
+      return {
+        success: true,
+        status: result.isUpdate ? "updated" : "created",
+        orderId: result.salesOrderId,
+        petpoojaOrderId: order.petpoojaOrderId,
+        outletId: resolvedOutlet.outletId,
+        itemCount: resolvedLineItems.length,
+        unmappedItemCount,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        status: "failed",
+        petpoojaOrderId: order.petpoojaOrderId,
+        outletId: context?.outlet.outletId,
+        error: err.message || String(err),
+      };
+    }
+  }
+
+  /**
+   * Ingests a batch of normalized orders.
+   *
+   * By default, processes orders with per-order transaction isolation:
+   * A failure in one order will not corrupt or roll back previously ingested orders.
+   *
+   * @param orders Array of normalized orders
+   * @param options Batch ingestion options
+   */
+  public async ingestBatch(
+    orders: NormalizedSalesOrder[],
+    options?: IngestionOptions
+  ): Promise<IngestionBatchStatistics> {
+    const stats: IngestionBatchStatistics = {
+      totalReceived: orders.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      unmappedItems: 0,
+      results: [],
+    };
+
+    // Group or resolve outlet context if all orders share the same restID
+    let context = options?.outletContext;
+    if (!context && orders.length > 0) {
+      const firstRestId = orders[0].petpoojaRestId;
+      const allSameRestId = orders.every((o) => o.petpoojaRestId === firstRestId);
+      if (allSameRestId) {
+        const outletRes = await this.resolver.resolveOutlet(firstRestId);
+        if (outletRes.success) {
+          context = await this.resolver.buildOutletResolutionContext(outletRes.outlet);
+        }
+      }
+    }
+
+    for (const order of orders) {
+      const orderResult = await this.ingestOrder(order, context);
+      stats.results.push(orderResult);
+
+      if (orderResult.success) {
+        if (orderResult.status === "created") stats.created++;
+        else if (orderResult.status === "updated") stats.updated++;
+        else if (orderResult.status === "skipped") stats.skipped++;
+
+        stats.unmappedItems += orderResult.unmappedItemCount;
+      } else {
+        stats.failed++;
+        if (options?.stopOnError) {
+          break;
+        }
+      }
+    }
+
+    return stats;
+  }
+}
+
+
+==================================================
+PETPOOJA WEBHOOK FILES
+==================================================
