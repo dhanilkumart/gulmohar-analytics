@@ -1,3 +1,4 @@
+import { resolveRestaurantContext } from "@/lib/context/restaurant-context";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
@@ -19,10 +20,8 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden: Operator role required" }, { status: 403 });
     }
 
-    const assignedOutlet = user.assignedOutlets[0];
-    if (!assignedOutlet) {
-      return NextResponse.json({ error: "No active assigned outlet found" }, { status: 403 });
-    }
+    const context = await resolveRestaurantContext(user);
+    const assignedOutlet = context.outlet;
 
     // 1. Fetch available preparation items in organization
     const preparationItems = await prisma.preparationItem.findMany({
@@ -113,7 +112,10 @@ export async function GET() {
       breakageReasons,
       departments,
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
+    }
     console.error("[Operator Meta API Error]:", error);
     return NextResponse.json(
       { error: "Failed to load operational metadata" },

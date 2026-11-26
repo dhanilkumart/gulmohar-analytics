@@ -1,3 +1,5 @@
+import { getRestaurantContext, type RestaurantContext } from "@/lib/context/restaurant-context";
+import { prisma } from "@/lib/db/client";
 import { Building2, CircleAlert, IndianRupee, Receipt } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { MetricCard } from "@/components/dashboard/ui-kit";
@@ -7,7 +9,7 @@ import { BreakageDetailTable, type BreakageDetailRow } from "@/components/dashbo
 import { BreakageRecordsSection, type DepartmentOption } from "@/components/dashboard/breakage-records-table";
 import { inr, num } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getDepartments, getActiveMasterOptions } from "@/lib/data";
+import { getActiveMasterOptions } from "@/lib/data";
 import {
   getBreakageInRange,
   getBreakageCost,
@@ -25,12 +27,12 @@ import {
  * breakage analytics function IS range-aware (no snapshot/current-state
  * distinction to preserve).
  */
-async function getBreakagePageData(range: DateRange) {
+async function getBreakagePageData(range: DateRange, context: RestaurantContext) {
   const [breakageInRange, byDepartment, byItem, highestCostDepartment] = await Promise.all([
-    getBreakageInRange(range),
-    getBreakageByDepartment(range),
-    getBreakageByItem(range),
-    getHighestCostBreakageDepartment(range),
+    getBreakageInRange(range, context),
+    getBreakageByDepartment(range, context),
+    getBreakageByItem(range, context),
+    getHighestCostBreakageDepartment(range, context),
   ]);
 
   const totalCost = getBreakageCost(breakageInRange);
@@ -47,16 +49,17 @@ export default async function BreakagePage({
   const resolvedRange = parseGlobalRangeParams(await searchParams);
   const { range, comparison, previousRange } = resolvedRange;
 
+  const context = await getRestaurantContext();
   const [current, previous, departments, masterOptions] = await Promise.all([
-    getBreakagePageData(range),
-    comparison === "previous" && previousRange ? getBreakagePageData(previousRange) : Promise.resolve(null),
-    getDepartments(),
-    getActiveMasterOptions(),
+    getBreakagePageData(range, context),
+    comparison === "previous" && previousRange ? getBreakagePageData(previousRange, context) : Promise.resolve(null),
+    prisma.department.findMany({ where: { outletId: context.outletId, isActive: true }, select: { id: true, departmentCode: true, name: true } }),
+    getActiveMasterOptions(context.organizationId),
   ]);
 
-  const departmentNamesById = new Map(departments.map((d) => [d.department_id, d.name]));
+  const departmentNamesById = new Map(departments.map((d) => [d.departmentCode, d.name]));
   const departmentOptions: DepartmentOption[] = departments.map((d) => ({
-    departmentId: d.department_id,
+    departmentId: d.id,
     name: d.name,
   }));
 

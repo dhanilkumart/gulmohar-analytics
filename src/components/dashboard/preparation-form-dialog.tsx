@@ -17,7 +17,6 @@ export function PreparationFormDialog({
   initial,
   preparationItems,
   departments,
-  currentOutletId,
   onSave,
 }: {
   open: boolean;
@@ -25,7 +24,6 @@ export function PreparationFormDialog({
   initial: any | null;
   preparationItems: PreparationItemOption[];
   departments: DepartmentOption[];
-  currentOutletId?: string | null;
   onSave: (record: any) => void;
 }) {
   const [date, setDate] = useState("");
@@ -75,7 +73,6 @@ export function PreparationFormDialog({
       const url = "/api/dashboard/preparation";
       const method = initial ? "PUT" : "POST";
       const payload: any = {
-        outletId: currentOutletId,
         itemId,
         date,
         quantity: qty,

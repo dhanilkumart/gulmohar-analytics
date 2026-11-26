@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { SalesScope } from "@/lib/data/sales";
 import { getDepartments, getEmployees } from "@/lib/data";
 
 export interface DepartmentManpower {
@@ -22,8 +23,8 @@ export interface DepartmentManpower {
  * would require an assumed working-days-per-month divisor, which is not
  * specified in business-rules.md.
  */
-export async function getDepartmentManpower(): Promise<DepartmentManpower[]> {
-  const [departments, employees] = await Promise.all([getDepartments(), getEmployees()]);
+export async function getDepartmentManpower(scope?: SalesScope): Promise<DepartmentManpower[]> {
+  const [departments, employees] = await Promise.all([getDepartments(scope), getEmployees()]);
 
   const activeEmployeesByDept = new Map<string, typeof employees>();
   for (const employee of employees) {

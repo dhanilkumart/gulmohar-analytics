@@ -1,3 +1,4 @@
+import { resolveRestaurantContext } from "@/lib/context/restaurant-context";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
@@ -35,13 +36,8 @@ export async function POST(request: Request) {
     }
 
     // 3. Resolve Operator Authorized Outlet strictly from server-side database assignments
-    const authorizedOutlet = user.assignedOutlets[0];
-    if (!authorizedOutlet || !authorizedOutlet.id) {
-      return NextResponse.json(
-        { error: "Forbidden: Operator has no assigned restaurant outlet" },
-        { status: 403 }
-      );
-    }
+    const context = await resolveRestaurantContext(user);
+    const authorizedOutlet = context.outlet;
 
     // 4. Parse and validate body
     const body = await request.json();
@@ -190,7 +186,10 @@ export async function POST(request: Request) {
         date: createdRecord.date.toISOString(),
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
+    }
     console.error("[Operator Breakage Entry API Error]:", error);
     return NextResponse.json(
       { error: "Failed to log breakage record. Please try again." },

@@ -68,11 +68,11 @@ async function getExecutiveDashboardData(range: DateRange, scope: SalesScope) {
     getProductProfitability(range, scope),
     getCategoriesFromDatabase(scope),
     getPreparationVsSoldVsWasted(range, scope),
-    getWastageInRange(range),
+    getWastageInRange(range, scope),
     getAttendanceInRange(range),
-    getDepartmentManpower(),
-    getBreakageInRange(range),
-    getHighestCostBreakageDepartment(range),
+    getDepartmentManpower(scope),
+    getBreakageInRange(range, scope),
+    getHighestCostBreakageDepartment(range, scope),
   ]);
 
   return {
@@ -115,7 +115,7 @@ export default async function DashboardOverviewPage({
 }) {
   const params = await searchParams;
   const resolvedRange = parseGlobalRangeParams(params);
-  const scope = await getDashboardSalesScope(params.outletId);
+  const scope = await getDashboardSalesScope();
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous, preparationTrend] = await Promise.all([

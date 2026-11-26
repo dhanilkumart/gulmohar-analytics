@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { SalesScope } from "@/lib/data/sales";
+import { getRestaurantContext } from "@/lib/context/restaurant-context";
+
 import { getWastage, getProducts } from "@/lib/data";
 import type { Wastage } from "@/types";
 import {
@@ -12,8 +15,11 @@ import {
 } from "./date-range";
 import { getPreparationInRange } from "./preparation";
 
-export async function getWastageInRange(range: DateRange): Promise<Wastage[]> {
+export async function getWastageInRange(range: DateRange, scope?: SalesScope): Promise<Wastage[]> {
+  const context = scope ?? await getRestaurantContext();
   const wastage = await getWastage({
+    outletId: context.outletId,
+    organizationId: context.organizationId,
     startDate: range.from,
     endDate: range.to,
   });

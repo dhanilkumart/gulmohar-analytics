@@ -37,7 +37,6 @@ export function WastageFormDialog({
   preparationItems,
   departments,
   reasons = [],
-  currentOutletId,
   onSave,
 }: {
   open: boolean;
@@ -46,7 +45,6 @@ export function WastageFormDialog({
   preparationItems: PreparationItemOption[];
   departments: DepartmentOption[];
   reasons?: ReasonOption[];
-  currentOutletId?: string | null;
   onSave: (record: any) => void;
 }) {
   const [date, setDate] = useState("");
@@ -98,14 +96,13 @@ export function WastageFormDialog({
     async function checkStock() {
       try {
         setCheckingAvailable(true);
-        const outletParam = currentOutletId ? `&outletId=${encodeURIComponent(currentOutletId)}` : "";
-        const res = await fetch(`/api/dashboard/preparation?itemId=${encodeURIComponent(itemId)}&startDate=${date}&endDate=${date}${outletParam}`);
+        const res = await fetch(`/api/dashboard/preparation?itemId=${encodeURIComponent(itemId)}&startDate=${date}&endDate=${date}`);
         if (res.ok && !ignore) {
           const json = await res.json();
           const totalPrepared = (json.records || []).reduce((sum: number, r: any) => sum + r.quantity, 0);
 
           // Get existing wastage for that day
-          const wasteRes = await fetch(`/api/dashboard/wastage?itemId=${encodeURIComponent(itemId)}&startDate=${date}&endDate=${date}${outletParam}`);
+          const wasteRes = await fetch(`/api/dashboard/wastage?itemId=${encodeURIComponent(itemId)}&startDate=${date}&endDate=${date}`);
           let totalWasted = 0;
           if (wasteRes.ok) {
             const wasteJson = await wasteRes.json();
@@ -127,7 +124,7 @@ export function WastageFormDialog({
     return () => {
       ignore = true;
     };
-  }, [open, itemId, date, currentOutletId, initial]);
+  }, [open, itemId, date, initial]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +146,6 @@ export function WastageFormDialog({
       const url = "/api/dashboard/wastage";
       const method = initial ? "PUT" : "POST";
       const payload: any = {
-        outletId: currentOutletId,
         itemId,
         date,
         wastedQuantity: qty,

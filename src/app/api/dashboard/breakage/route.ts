@@ -1,5 +1,6 @@
+import { resolveRestaurantContext, assertRestaurantRecord, validateRestaurantDepartment } from "@/lib/context/restaurant-context";
 import { NextResponse } from "next/server";
-import { getCurrentUser, resolveAuthorizedOutletScope, resolveSafeWriteOutletId } from "@/lib/auth/scope";
+import { getCurrentUser } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@prisma/client";
 
@@ -19,21 +20,16 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const requestedOutletId = searchParams.get("outletId");
     const startDateParam = searchParams.get("startDate");
     const endDateParam = searchParams.get("endDate");
     const departmentIdParam = searchParams.get("departmentId");
 
     // Authorize outlet access server-side
-    const scope = await resolveAuthorizedOutletScope(user, requestedOutletId);
+    const context = await resolveRestaurantContext(user);
 
     const where: Prisma.BreakageRecordWhereInput = {};
 
-    if (scope.targetOutletId) {
-      where.outletId = scope.targetOutletId;
-    } else if (scope.allowedOutlets.length > 0) {
-      where.outletId = { in: scope.allowedOutlets.map((o) => o.id) };
-    }
+    where.outletId = context.outletId;
 
     if (startDateParam || endDateParam) {
       where.date = {};
@@ -74,13 +70,16 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       outletScope: {
-        targetOutletId: scope.targetOutletId,
-        isConsolidated: scope.isConsolidated,
+        targetOutletId: context.outletId,
+        isConsolidated: false,
       },
       records: mapped,
     });
   } catch (error: unknown) {
     const err = error as Error;
+    if (err.message?.startsWith("CONFIGURATION")) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
     if (err.message?.startsWith("FORBIDDEN")) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
@@ -106,7 +105,6 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const {
-      outletId,
       departmentId,
       item,
       quantity,
@@ -116,13 +114,8 @@ export async function POST(request: Request) {
     } = body;
 
     // Resolve & authorize target outlet safely
-    let targetOutletId: string;
-    try {
-      targetOutletId = await resolveSafeWriteOutletId(user, outletId);
-    } catch (err: unknown) {
-      const error = err as Error;
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
+    const context = await resolveRestaurantContext(user);
+    const targetOutletId = context.outletId;
 
     if (!item || typeof item !== "string") {
       return NextResponse.json({ error: "Item name is required" }, { status: 400 });
@@ -199,6 +192,9 @@ export async function POST(request: Request) {
     });
   } catch (error: unknown) {
     const err = error as Error;
+    if (err.message?.startsWith("CONFIGURATION")) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
     if (err.message?.startsWith("FORBIDDEN")) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
@@ -238,7 +234,8 @@ export async function PUT(request: Request) {
     }
 
     // Verify outlet scope authority
-    await resolveAuthorizedOutletScope(user, existing.outletId);
+    const context = await resolveRestaurantContext(user);
+    assertRestaurantRecord(context, existing);
 
     const qty = quantity !== undefined ? parseInt(String(quantity), 10) : existing.brokenQty;
 
@@ -261,6 +258,8 @@ export async function PUT(request: Request) {
     } else if (unitCost !== null) {
       totalCost = unitCost.mul(new Prisma.Decimal(qty));
     }
+
+    await validateRestaurantDepartment(context, departmentId || existing.departmentId);
 
     const updated = await prisma.breakageRecord.update({
       where: { id },
@@ -296,6 +295,9 @@ export async function PUT(request: Request) {
     });
   } catch (error: unknown) {
     const err = error as Error;
+    if (err.message?.startsWith("CONFIGURATION")) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
     if (err.message?.startsWith("FORBIDDEN")) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
@@ -335,7 +337,8 @@ export async function DELETE(request: Request) {
     }
 
     // Verify outlet scope authority
-    await resolveAuthorizedOutletScope(user, existing.outletId);
+    const context = await resolveRestaurantContext(user);
+    assertRestaurantRecord(context, existing);
 
     await prisma.breakageRecord.delete({
       where: { id },
@@ -347,6 +350,9 @@ export async function DELETE(request: Request) {
     });
   } catch (error: unknown) {
     const err = error as Error;
+    if (err.message?.startsWith("CONFIGURATION")) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
     if (err.message?.startsWith("FORBIDDEN")) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }

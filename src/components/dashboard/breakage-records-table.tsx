@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SectionHeader, StatusBadge } from "@/components/dashboard/ui-kit";
@@ -44,8 +43,6 @@ export function BreakageRecordsSection({
   breakageItems?: BreakageItemOption[];
   reasons?: BreakageReasonOption[];
 }) {
-  const searchParams = useSearchParams();
-  const currentOutletId = searchParams.get("outletId");
 
   const [records, setRecords] = useState<BreakageRecordItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,8 +56,7 @@ export function BreakageRecordsSection({
   const fetchRecords = useCallback(async () => {
     try {
       setLoading(true);
-      const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
-      const res = await fetch(`/api/dashboard/breakage${query}`);
+      const res = await fetch(`/api/dashboard/breakage`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.records)) {
@@ -73,15 +69,14 @@ export function BreakageRecordsSection({
     } finally {
       setLoading(false);
     }
-  }, [currentOutletId]);
+  }, []);
 
   useEffect(() => {
     let ignore = false;
     async function load() {
       try {
         setLoading(true);
-        const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
-        const res = await fetch(`/api/dashboard/breakage${query}`);
+        const res = await fetch(`/api/dashboard/breakage`);
         if (res.ok && !ignore) {
           const json = await res.json();
           if (json.success && Array.isArray(json.records)) {
@@ -103,7 +98,7 @@ export function BreakageRecordsSection({
     return () => {
       ignore = true;
     };
-  }, [currentOutletId]);
+  }, []);
 
   const saveRecord = async (formRecord: BreakageRecordItem) => {
     const isUpdate = Boolean(editing?.id);
@@ -119,7 +114,6 @@ export function BreakageRecordsSection({
             reason: formRecord.reason,
           }
         : {
-            outletId: currentOutletId || undefined,
             departmentId: formRecord.departmentId,
             item: formRecord.item,
             quantity: formRecord.quantity,

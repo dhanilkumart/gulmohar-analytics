@@ -1,11 +1,17 @@
 import "server-only";
 
+import type { SalesScope } from "@/lib/data/sales";
+import { getRestaurantContext } from "@/lib/context/restaurant-context";
+
 import { getBreakage, getDepartments } from "@/lib/data";
 import type { Breakage } from "@/types";
 import { filterByDateRange, type DateRange } from "./date-range";
 
-export async function getBreakageInRange(range: DateRange): Promise<Breakage[]> {
+export async function getBreakageInRange(range: DateRange, scope?: SalesScope): Promise<Breakage[]> {
+  const context = scope ?? await getRestaurantContext();
   const breakage = await getBreakage({
+    outletId: context.outletId,
+    organizationId: context.organizationId,
     startDate: range.from,
     endDate: range.to,
   });
@@ -50,10 +56,10 @@ export interface BreakageByDepartment {
 }
 
 /** Breakage grouped by `Breakage.department_id`, joined to department names. */
-export async function getBreakageByDepartment(range: DateRange): Promise<BreakageByDepartment[]> {
+export async function getBreakageByDepartment(range: DateRange, scope?: SalesScope): Promise<BreakageByDepartment[]> {
   const [breakageInRange, departments] = await Promise.all([
-    getBreakageInRange(range),
-    getDepartments(),
+    getBreakageInRange(range, scope),
+    getDepartments(scope ?? await getRestaurantContext()),
   ]);
   const departmentNamesById = new Map(departments.map((d) => [d.department_id, d.name]));
 
@@ -81,8 +87,8 @@ export interface BreakageByItem {
 }
 
 /** Breakage grouped by `Breakage.item` (free text — see docs/architecture.md). */
-export async function getBreakageByItem(range: DateRange): Promise<BreakageByItem[]> {
-  const breakageInRange = await getBreakageInRange(range);
+export async function getBreakageByItem(range: DateRange, scope?: SalesScope): Promise<BreakageByItem[]> {
+  const breakageInRange = await getBreakageInRange(range, scope);
   const byItem = new Map<string, { eventCount: number; quantity: number; breakageCost: number }>();
 
   for (const row of breakageInRange) {
@@ -102,9 +108,10 @@ export async function getBreakageByItem(range: DateRange): Promise<BreakageByIte
  * rather than re-aggregating `Breakage[]`.
  */
 export async function getHighestCostBreakageDepartment(
-  range: DateRange
+  range: DateRange,
+  scope?: SalesScope
 ): Promise<BreakageByDepartment | null> {
-  const byDepartment = await getBreakageByDepartment(range);
+  const byDepartment = await getBreakageByDepartment(range, scope);
   if (byDepartment.length === 0) return null;
   return byDepartment.reduce((highest, current) =>
     current.breakageCost > highest.breakageCost ? current : highest

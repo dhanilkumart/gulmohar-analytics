@@ -4,6 +4,10 @@ export interface DashboardRouteMeta {
 }
 
 export const DASHBOARD_ROUTES_META: Record<string, DashboardRouteMeta> = {
+  "/orders": {
+    title: "Orders",
+    description: "Database orders and read-only Petpooja response inspection",
+  },
   "/dashboard": {
     title: "Executive Dashboard",
     description: "Restaurant performance overview and management analytics",

@@ -1,3 +1,4 @@
+import { resolveRestaurantContext, validateRestaurantDepartment } from "@/lib/context/restaurant-context";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
@@ -17,13 +18,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const authorizedOutlet = user.assignedOutlets[0];
-    if (!authorizedOutlet || !authorizedOutlet.id) {
-      return NextResponse.json(
-        { error: "Forbidden: Operator has no assigned restaurant outlet" },
-        { status: 403 }
-      );
-    }
+    const context = await resolveRestaurantContext(user);
+    const authorizedOutlet = context.outlet;
 
     const body = await request.json();
     const { itemId, wastedQuantity, reason, notes, date } = body;
@@ -111,6 +107,8 @@ export async function POST(request: Request) {
         estimatedCost = unitCost.mul(new Prisma.Decimal(wasteQty));
       }
 
+      await validateRestaurantDepartment(context, item.departmentId || null);
+
       return await tx.wastageRecord.create({
         data: {
           outletId: authorizedOutlet.id,
@@ -146,6 +144,9 @@ export async function POST(request: Request) {
       },
     });
   } catch (error: unknown) {
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
+    }
     const err = error as Error;
     if (err.message?.startsWith("NOT_FOUND")) {
       return NextResponse.json({ error: err.message.replace("NOT_FOUND: ", "") }, { status: 404 });

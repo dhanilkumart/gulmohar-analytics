@@ -35,8 +35,8 @@ export async function getOperationalContributionForRange(
       getSalesInRange(range, scope),
       getSaleItemsInRange(range, scope),
       getProductsFromDatabase(scope),
-      getWastageInRange(range),
-      getBreakageInRange(range),
+      getWastageInRange(range, scope),
+      getBreakageInRange(range, scope),
       getOperatingCostsInRange(range),
     ]);
 

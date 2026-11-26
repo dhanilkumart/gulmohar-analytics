@@ -9,6 +9,7 @@ import {
   GaugeCircle,
   FileBarChart2,
   Database,
+  ReceiptText,
 } from "lucide-react";
 
 export interface NavItem {
@@ -34,6 +35,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Executive Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { label: "Sales Analytics", href: "/dashboard/sales", icon: TrendingUp },
+      { label: "Orders", href: "/orders", icon: ReceiptText },
       { label: "Profitability", href: "/dashboard/profitability", icon: HandCoins },
     ],
   },

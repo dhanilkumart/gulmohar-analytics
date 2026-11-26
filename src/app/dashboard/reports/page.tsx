@@ -50,7 +50,7 @@ async function getReportsPageData(range: DateRange, scope: SalesScope) {
       getOperationalContributionForRange(range, scope),
       getSalesSummary(range, scope),
       getPreparationVsSoldVsWasted(range, scope),
-      getBreakageInRange(range),
+      getBreakageInRange(range, scope),
       getAttendanceInRange(range),
       getProductProfitability(range, scope),
     ]);
@@ -119,7 +119,7 @@ export default async function ReportsPage({
 }) {
   const params = await searchParams;
   const resolvedRange = parseGlobalRangeParams(params);
-  const scope = await getDashboardSalesScope(params.outletId);
+  const scope = await getDashboardSalesScope();
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous] = await Promise.all([

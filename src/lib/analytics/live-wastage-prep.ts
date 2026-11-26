@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { RestaurantContext } from "@/lib/context/restaurant-context";
+
 import { prisma } from "@/lib/db/client";
 import {
   enumeratePeriods,
@@ -53,12 +55,12 @@ export interface LiveWastagePreparationDashboardData {
 
 export async function getLiveWastagePreparationMetrics(
   range: DateRange,
-  outletId?: string
+  context: RestaurantContext
 ): Promise<LiveWastagePreparationDashboardData> {
   const startDate = new Date(`${range.from}T00:00:00.000Z`);
   const endDate = new Date(`${range.to}T23:59:59.999Z`);
 
-  const outletFilter = outletId && outletId !== "all" ? { outletId } : {};
+  const outletFilter = { outletId: context.outletId, outlet: { organizationId: context.organizationId } };
 
   // Fetch all preparation logs in date range & outlet
   const prepLogs = await prisma.preparationLog.findMany({

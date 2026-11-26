@@ -1,5 +1,6 @@
+import { resolveRestaurantContext, assertRestaurantRecord, validateRestaurantDepartment } from "@/lib/context/restaurant-context";
 import { NextResponse } from "next/server";
-import { getCurrentUser, resolveAuthorizedOutletScope, resolveSafeWriteOutletId } from "@/lib/auth/scope";
+import { getCurrentUser } from "@/lib/auth/scope";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@prisma/client";
 
@@ -19,23 +20,18 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const requestedOutletId = searchParams.get("outletId");
     const startDateParam = searchParams.get("startDate");
     const endDateParam = searchParams.get("endDate");
     const reasonParam = searchParams.get("reason");
     const itemIdParam = searchParams.get("itemId");
 
     // Authorize outlet access server-side
-    const scope = await resolveAuthorizedOutletScope(user, requestedOutletId);
+    const context = await resolveRestaurantContext(user);
 
     // Build Prisma where filter
     const where: Prisma.WastageRecordWhereInput = {};
 
-    if (scope.targetOutletId) {
-      where.outletId = scope.targetOutletId;
-    } else if (scope.allowedOutlets.length > 0) {
-      where.outletId = { in: scope.allowedOutlets.map((o) => o.id) };
-    }
+    where.outletId = context.outletId;
 
     if (startDateParam || endDateParam) {
       where.date = {};
@@ -84,15 +80,14 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       outletScope: {
-        targetOutletId: scope.targetOutletId,
-        isConsolidated: scope.isConsolidated,
+        targetOutletId: context.outletId,
+        isConsolidated: false,
       },
       records: mapped,
     });
   } catch (error: unknown) {
-    const err = error as Error;
-    if (err.message?.startsWith("FORBIDDEN")) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
     }
     console.error("[Dashboard Wastage GET Error]:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -115,16 +110,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { outletId, itemId, date, wastedQuantity, reason, departmentId, notes } = body;
+    const { itemId, date, wastedQuantity, reason, departmentId, notes } = body;
 
     // Resolve & authorize target outlet safely
-    let targetOutletId: string;
-    try {
-      targetOutletId = await resolveSafeWriteOutletId(user, outletId);
-    } catch (err: unknown) {
-      const error = err as Error;
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
+    const context = await resolveRestaurantContext(user);
+    const targetOutletId = context.outletId;
 
     const wasteQty = Number(wastedQuantity);
     if (isNaN(wasteQty) || wasteQty <= 0) {
@@ -200,6 +190,8 @@ export async function POST(request: Request) {
         estimatedCost = unitCost.mul(new Prisma.Decimal(wasteQty));
       }
 
+      await validateRestaurantDepartment(context, departmentId || item.departmentId || null);
+
       return await tx.wastageRecord.create({
         data: {
           outletId: targetOutletId,
@@ -239,10 +231,10 @@ export async function POST(request: Request) {
       },
     });
   } catch (error: unknown) {
-    const err = error as Error;
-    if (err.message?.startsWith("FORBIDDEN")) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
     }
+    const err = error as Error;
     if (err.message?.startsWith("NOT_FOUND")) {
       return NextResponse.json({ error: err.message.replace("NOT_FOUND: ", "") }, { status: 404 });
     }
@@ -285,10 +277,8 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Wastage record not found" }, { status: 404 });
     }
 
-    const scope = await resolveAuthorizedOutletScope(user, existing.outletId);
-    if (!scope.allowedOutlets.some((o) => o.id === existing.outletId)) {
-      return NextResponse.json({ error: "Forbidden: Unauthorized outlet" }, { status: 403 });
-    }
+    const context = await resolveRestaurantContext(user);
+    assertRestaurantRecord(context, existing);
 
     const wasteQty = Number(wastedQuantity);
     if (isNaN(wasteQty) || wasteQty <= 0) {
@@ -296,6 +286,8 @@ export async function PUT(request: Request) {
     }
 
     // Concurrency-safe check inside transaction
+    await validateRestaurantDepartment(context, departmentId || null);
+
     const updated = await prisma.$transaction(async (tx) => {
       const prepAgg = await tx.preparationLog.aggregate({
         where: {
@@ -367,6 +359,9 @@ export async function PUT(request: Request) {
       },
     });
   } catch (error: unknown) {
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
+    }
     const err = error as Error;
     if (err.message?.startsWith("VALIDATION")) {
       return NextResponse.json({ error: err.message.replace("VALIDATION: ", "") }, { status: 400 });
@@ -406,10 +401,8 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Wastage record not found" }, { status: 404 });
     }
 
-    const scope = await resolveAuthorizedOutletScope(user, existing.outletId);
-    if (!scope.allowedOutlets.some((o) => o.id === existing.outletId)) {
-      return NextResponse.json({ error: "Forbidden: Unauthorized outlet" }, { status: 403 });
-    }
+    const context = await resolveRestaurantContext(user);
+    assertRestaurantRecord(context, existing);
 
     await prisma.wastageRecord.delete({ where: { id } });
 
@@ -418,6 +411,9 @@ export async function DELETE(request: Request) {
       message: "Wastage record deleted successfully",
     });
   } catch (error: unknown) {
+    if (error instanceof Error && /^(FORBIDDEN|CONFIGURATION):/.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: error.message.startsWith("FORBIDDEN") ? 403 : 500 });
+    }
     console.error("[Dashboard Wastage DELETE Error]:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }

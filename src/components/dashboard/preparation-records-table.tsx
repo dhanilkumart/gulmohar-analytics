@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SectionHeader, StatusBadge } from "@/components/dashboard/ui-kit";
@@ -40,8 +39,6 @@ export function PreparationRecordsSection({
   departments: DepartmentOption[];
   onRecordChange?: () => void;
 }) {
-  const searchParams = useSearchParams();
-  const currentOutletId = searchParams.get("outletId");
 
   const [records, setRecords] = useState<PreparationRecordItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,8 +51,7 @@ export function PreparationRecordsSection({
   const fetchRecords = useCallback(async () => {
     try {
       setLoading(true);
-      const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
-      const res = await fetch(`/api/dashboard/preparation${query}`);
+      const res = await fetch(`/api/dashboard/preparation`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.records)) {
@@ -68,7 +64,7 @@ export function PreparationRecordsSection({
     } finally {
       setLoading(false);
     }
-  }, [currentOutletId]);
+  }, []);
 
   useEffect(() => {
     fetchRecords();
@@ -192,7 +188,6 @@ export function PreparationRecordsSection({
         initial={editing}
         preparationItems={preparationItems}
         departments={departments}
-        currentOutletId={currentOutletId}
         onSave={handleSave}
       />
 

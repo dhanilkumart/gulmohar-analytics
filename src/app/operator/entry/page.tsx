@@ -1,3 +1,4 @@
+import { resolveRestaurantContext } from "@/lib/context/restaurant-context";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/scope";
 import { OperatorPortal } from "@/components/operator/operator-portal";
@@ -15,12 +16,7 @@ export default async function OperatorEntryPage() {
   }
 
   // Operator and Manager can access Operator entry. If Admin visits, they can also access or test it.
-  const activeOutlet = user.assignedOutlets[0] || {
-    id: "default",
-    code: "KOZ-001",
-    name: "Gulmohar Restaurant",
-    city: "Kozhikode",
-  };
+  const { outlet: activeOutlet } = await resolveRestaurantContext(user);
 
   return <OperatorPortal user={user} outlet={activeOutlet} />;
 }

@@ -1,3 +1,5 @@
+import { getRestaurantContext } from "@/lib/context/restaurant-context";
+import { prisma } from "@/lib/db/client";
 import { ChefHat, IndianRupee, Percent, Trash2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { MetricCard } from "@/components/dashboard/ui-kit";
@@ -10,7 +12,7 @@ import { PreparationRecordsSection } from "@/components/dashboard/preparation-re
 import { WastageRecordsSection } from "@/components/dashboard/wastage-records-table";
 import { inr, num, pct } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getPreparationItems, getDepartments, getActiveMasterOptions } from "@/lib/data";
+import { getPreparationItems, getActiveMasterOptions } from "@/lib/data";
 import { getLiveWastagePreparationMetrics, comparePeriodValues } from "@/lib/analytics";
 
 export default async function WastagePage({
@@ -20,17 +22,16 @@ export default async function WastagePage({
 }) {
   const resolvedRange = parseGlobalRangeParams(await searchParams);
   const { range, comparison, previousRange } = resolvedRange;
-  const rawOutlet = (await searchParams).outletId;
-  const currentOutletId = Array.isArray(rawOutlet) ? rawOutlet[0] : rawOutlet || undefined;
+  const context = await getRestaurantContext();
 
   const [currentMetrics, previousMetrics, prepItems, departments, masterOptions] = await Promise.all([
-    getLiveWastagePreparationMetrics(range, currentOutletId),
+    getLiveWastagePreparationMetrics(range, context),
     comparison === "previous" && previousRange
-      ? getLiveWastagePreparationMetrics(previousRange, currentOutletId)
+      ? getLiveWastagePreparationMetrics(previousRange, context)
       : Promise.resolve(null),
-    getPreparationItems(),
-    getDepartments(),
-    getActiveMasterOptions(),
+    getPreparationItems(context.organizationId),
+    prisma.department.findMany({ where: { outletId: context.outletId, isActive: true }, select: { id: true, name: true } }),
+    getActiveMasterOptions(context.organizationId),
   ]);
 
   const costDelta = previousMetrics
@@ -39,7 +40,7 @@ export default async function WastagePage({
   const comparisonLabel = costDelta ? "vs previous period" : undefined;
 
   const departmentOptions = departments.map((d) => ({
-    id: d.department_id,
+    id: d.id,
     name: d.name,
   }));
 

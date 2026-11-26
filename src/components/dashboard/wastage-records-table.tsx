@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SectionHeader, StatusBadge } from "@/components/dashboard/ui-kit";
@@ -43,8 +42,6 @@ export function WastageRecordsSection({
   reasons?: ReasonOption[];
   onRecordChange?: () => void;
 }) {
-  const searchParams = useSearchParams();
-  const currentOutletId = searchParams.get("outletId");
 
   const [records, setRecords] = useState<WastageRecordItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,8 +54,7 @@ export function WastageRecordsSection({
   const fetchRecords = useCallback(async () => {
     try {
       setLoading(true);
-      const query = currentOutletId ? `?outletId=${encodeURIComponent(currentOutletId)}` : "";
-      const res = await fetch(`/api/dashboard/wastage${query}`);
+      const res = await fetch(`/api/dashboard/wastage`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.records)) {
@@ -71,7 +67,7 @@ export function WastageRecordsSection({
     } finally {
       setLoading(false);
     }
-  }, [currentOutletId]);
+  }, []);
 
   useEffect(() => {
     fetchRecords();
@@ -210,7 +206,6 @@ export function WastageRecordsSection({
         preparationItems={preparationItems}
         departments={departments}
         reasons={reasons}
-        currentOutletId={currentOutletId}
         onSave={handleSave}
       />
 

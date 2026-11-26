@@ -8,6 +8,7 @@ import { createCachedLoader, getDataSourceMode } from "./reader";
  * Filter options for reading breakage records from PostgreSQL or mock data.
  */
 export interface BreakageFilterOptions {
+  organizationId?: string;
   outletId?: string;
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
@@ -46,12 +47,15 @@ export async function getBreakage(options?: BreakageFilterOptions): Promise<Brea
   // Database mode: Read from PostgreSQL via Prisma
   try {
     const whereClause: {
+      outlet?: { organizationId: string };
       outletId?: string;
       date?: {
         gte?: Date;
         lte?: Date;
       };
     } = {};
+
+    if (options?.organizationId) whereClause.outlet = { organizationId: options.organizationId };
 
     if (options?.outletId && options.outletId !== "all") {
       whereClause.outletId = options.outletId;

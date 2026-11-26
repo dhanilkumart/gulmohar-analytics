@@ -87,7 +87,7 @@ export default async function ProfitabilityPage({
 }) {
   const params = await searchParams;
   const resolvedRange = parseGlobalRangeParams(params);
-  const scope = await getDashboardSalesScope(params.outletId);
+  const scope = await getDashboardSalesScope();
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous] = await Promise.all([
