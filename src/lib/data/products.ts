@@ -41,7 +41,10 @@ export async function getProducts(options?: ProductFilterOptions): Promise<Produ
     return products.filter((p) => p.active !== false);
   }
 
-  // Database mode: Read from PostgreSQL via Prisma
+  return getProductsFromDatabase(options);
+}
+
+export async function getProductsFromDatabase(options?: ProductFilterOptions): Promise<Product[]> {
   try {
     const whereClause: {
       organizationId?: string;

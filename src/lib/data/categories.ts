@@ -29,7 +29,10 @@ export async function getCategories(options?: CategoryFilterOptions): Promise<Ca
     return loadCategoriesMock();
   }
 
-  // Database mode: Read from PostgreSQL via Prisma
+  return getCategoriesFromDatabase(options);
+}
+
+export async function getCategoriesFromDatabase(options?: CategoryFilterOptions): Promise<Category[]> {
   try {
     const whereClause: {
       organizationId?: string;

@@ -10,7 +10,7 @@ import {
   type DateRange,
   type TrendGranularity,
 } from "./date-range";
-import { getPreparationVsSoldVsWasted } from "./preparation";
+import { getPreparationInRange } from "./preparation";
 
 export async function getWastageInRange(range: DateRange): Promise<Wastage[]> {
   const wastage = await getWastage({
@@ -85,25 +85,30 @@ export interface WastageByProduct {
   productName: string;
   wastedQuantity: number;
   wastageCost: number;
-  /** From `getPreparationVsSoldVsWasted` — wasted/prepared * 100 for this product in the range. */
+  /** From `getPreparationInRange` — wasted/prepared * 100 for this product in the range. */
   wastagePercentage: number;
 }
 
 /**
  * Wastage grouped by product, for the 8 products tracked in
- * preparation.json/wastage.json. Composes `getPreparationVsSoldVsWasted`
- * for wasted quantity/percentage (already-aggregated, weighted correctly)
- * instead of re-deriving it from wastage.json.
+ * preparation.json/wastage.json. Preparation records supply the quantities
+ * used for the weighted wastage percentage.
  */
 export async function getWastageByProduct(range: DateRange): Promise<WastageByProduct[]> {
   const [wastageInRange, preparationTotals, products] = await Promise.all([
     getWastageInRange(range),
-    getPreparationVsSoldVsWasted(range),
+    getPreparationInRange(range),
     getProducts(),
   ]);
 
   const productsById = new Map(products.map((p) => [p.product_id, p]));
-  const preparationByProduct = new Map(preparationTotals.map((p) => [p.productId, p]));
+  const preparationByProduct = new Map<string, { preparedQuantity: number; wastedQuantity: number }>();
+  for (const row of preparationTotals) {
+    const totals = preparationByProduct.get(row.product_id) ?? { preparedQuantity: 0, wastedQuantity: 0 };
+    totals.preparedQuantity += row.prepared_quantity;
+    totals.wastedQuantity += row.wasted_quantity;
+    preparationByProduct.set(row.product_id, totals);
+  }
 
   const costByProduct = new Map<string, number>();
   for (const row of wastageInRange) {
@@ -118,7 +123,9 @@ export async function getWastageByProduct(range: DateRange): Promise<WastageByPr
       productName: productsById.get(productId)?.name ?? productId,
       wastedQuantity: preparation?.wastedQuantity ?? 0,
       wastageCost,
-      wastagePercentage: preparation?.wastagePercentage ?? 0,
+      wastagePercentage: preparation && preparation.preparedQuantity > 0
+        ? (preparation.wastedQuantity / preparation.preparedQuantity) * 100
+        : 0,
     };
   });
 }

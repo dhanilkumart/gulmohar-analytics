@@ -1,5 +1,5 @@
 /**
- * Structure of mock_data/sales.json (bill/order headers).
+ * Sales order header returned by the data layer.
  *
  * Observed `order_type` values: "Dine-in" | "Delivery" | "Takeaway".
  * Observed `payment_method` values: "Cash" | "Card" | "UPI".

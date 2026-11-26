@@ -1,3 +1,5 @@
+import { getDashboardSalesScope } from "@/lib/auth/dashboard-sales-scope";
+import type { SalesScope } from "@/lib/data/sales";
 import { ArrowDownCircle, ArrowUpCircle, ChefHat, IndianRupee, Percent, Scale } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { MetricCard } from "@/components/dashboard/ui-kit";
@@ -10,7 +12,7 @@ import { ProfitabilityClassificationTable } from "@/components/dashboard/profita
 import { ProductProfitabilityTable, type ProductProfitabilityRow } from "@/components/dashboard/product-profitability-table";
 import { inr, num, pct } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getCategories } from "@/lib/data";
+import { getCategoriesFromDatabase } from "@/lib/data/categories";
 import {
   getProductProfitability,
   getHighProfitProducts,
@@ -29,10 +31,10 @@ import {
  * `src/lib/analytics/profitability.ts` — nothing is computed from raw
  * JSON here.
  */
-async function getProfitabilityPageData(range: DateRange) {
+async function getProfitabilityPageData(range: DateRange, scope: SalesScope) {
   const [productProfitability, categories] = await Promise.all([
-    getProductProfitability(range),
-    getCategories(),
+    getProductProfitability(range, scope),
+    getCategoriesFromDatabase(scope),
   ]);
 
   const revenue = productProfitability.reduce((sum, p) => sum + p.revenue, 0);
@@ -83,12 +85,14 @@ export default async function ProfitabilityPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const resolvedRange = parseGlobalRangeParams(await searchParams);
+  const params = await searchParams;
+  const resolvedRange = parseGlobalRangeParams(params);
+  const scope = await getDashboardSalesScope(params.outletId);
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous] = await Promise.all([
-    getProfitabilityPageData(range),
-    comparison === "previous" && previousRange ? getProfitabilityPageData(previousRange) : Promise.resolve(null),
+    getProfitabilityPageData(range, scope),
+    comparison === "previous" && previousRange ? getProfitabilityPageData(previousRange, scope) : Promise.resolve(null),
   ]);
 
   const deltas = previous

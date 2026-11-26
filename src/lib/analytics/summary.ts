@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getProducts } from "@/lib/data";
+import { getProductsFromDatabase } from "@/lib/data/products";
+import type { SalesScope } from "@/lib/data/sales";
 import type { DateRange } from "./date-range";
 import { getSaleItemsInRange, getSalesInRange, getNetSales } from "./sales";
 import { getFoodCost } from "./profitability";
@@ -26,13 +27,14 @@ export interface OperationalContributionForRange extends OperationalContribution
  * these raw datasets itself.
  */
 export async function getOperationalContributionForRange(
-  range: DateRange
+  range: DateRange,
+  scope?: SalesScope
 ): Promise<OperationalContributionForRange> {
   const [salesInRange, saleItemsInRange, products, wastageInRange, breakageInRange, operatingCostsInRange] =
     await Promise.all([
-      getSalesInRange(range),
-      getSaleItemsInRange(range),
-      getProducts(),
+      getSalesInRange(range, scope),
+      getSaleItemsInRange(range, scope),
+      getProductsFromDatabase(scope),
       getWastageInRange(range),
       getBreakageInRange(range),
       getOperatingCostsInRange(range),

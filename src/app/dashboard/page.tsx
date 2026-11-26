@@ -1,3 +1,5 @@
+import { getDashboardSalesScope } from "@/lib/auth/dashboard-sales-scope";
+import type { SalesScope } from "@/lib/data/sales";
 import { IndianRupee, ReceiptIndianRupee, ChefHat, Trash2, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/page-container";
@@ -6,13 +8,14 @@ import { SalesPerformanceChart, type SalesPerformancePoint } from "@/components/
 import { CategoryPerformanceChart, type CategoryPerformancePoint } from "@/components/dashboard/category-performance-chart";
 import { TopPerformingItems } from "@/components/dashboard/top-performing-items";
 import { ItemsNeedingAttention, type AttentionProduct } from "@/components/dashboard/items-needing-attention";
+import { PreparedVsSoldTrendChart } from "@/components/dashboard/prepared-vs-sold-trend-chart";
 import { FoodPrepWastageChart, type PreparationChartPoint } from "@/components/dashboard/food-prep-wastage-chart";
 import { ManpowerOverview } from "@/components/dashboard/manpower-overview";
 import { BreakageSummary } from "@/components/dashboard/breakage-summary";
 import { ManagementAttention } from "@/components/dashboard/management-attention";
 import { inr, num, pct } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getCategories, getProducts } from "@/lib/data";
+import { getCategoriesFromDatabase } from "@/lib/data/categories";
 import {
   getSalesSummary,
   getSalesTrend,
@@ -21,6 +24,7 @@ import {
   getLossMakingProducts,
   getHighSalesLowMarginProducts,
   getPreparationVsSoldVsWasted,
+  getPreparationTrend,
   getWastageInRange,
   getWastageCost,
   getAttendanceInRange,
@@ -42,7 +46,7 @@ import {
  * below) — every field here comes from an existing analytics function;
  * nothing is computed from raw JSON in this file.
  */
-async function getExecutiveDashboardData(range: DateRange) {
+async function getExecutiveDashboardData(range: DateRange, scope: SalesScope) {
   const [
     contribution,
     salesSummary,
@@ -51,21 +55,19 @@ async function getExecutiveDashboardData(range: DateRange) {
     productProfitability,
     categories,
     preparationTotals,
-    products,
     wastageInRange,
     attendanceInRange,
     departments,
     breakageInRange,
     highestCostDepartment,
   ] = await Promise.all([
-    getOperationalContributionForRange(range),
-    getSalesSummary(range),
-    getSalesTrend(range),
-    getOrdersTrend(range),
-    getProductProfitability(range),
-    getCategories(),
-    getPreparationVsSoldVsWasted(range),
-    getProducts(),
+    getOperationalContributionForRange(range, scope),
+    getSalesSummary(range, scope),
+    getSalesTrend(range, undefined, scope),
+    getOrdersTrend(range, undefined, scope),
+    getProductProfitability(range, scope),
+    getCategoriesFromDatabase(scope),
+    getPreparationVsSoldVsWasted(range, scope),
     getWastageInRange(range),
     getAttendanceInRange(range),
     getDepartmentManpower(),
@@ -81,7 +83,6 @@ async function getExecutiveDashboardData(range: DateRange) {
     productProfitability,
     categories,
     preparationTotals,
-    products,
     wastageCost: getWastageCost(wastageInRange),
     attendance: getAttendanceSummary(attendanceInRange),
     departments,
@@ -112,14 +113,17 @@ export default async function DashboardOverviewPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const resolvedRange = parseGlobalRangeParams(await searchParams);
+  const params = await searchParams;
+  const resolvedRange = parseGlobalRangeParams(params);
+  const scope = await getDashboardSalesScope(params.outletId);
   const { range, comparison, previousRange } = resolvedRange;
 
-  const [current, previous] = await Promise.all([
-    getExecutiveDashboardData(range),
+  const [current, previous, preparationTrend] = await Promise.all([
+    getExecutiveDashboardData(range, scope),
     comparison === "previous" && previousRange
-      ? getExecutiveDashboardData(previousRange)
+      ? getExecutiveDashboardData(previousRange, scope)
       : Promise.resolve(null),
+    getPreparationTrend(range, "day", scope),
   ]);
 
   const deltas =
@@ -169,12 +173,10 @@ export default async function DashboardOverviewPage({
       .map((product) => ({ product, classification: "High Sales / Low Margin" as const })),
   ];
 
-  // --- Food Preparation & Wastage: join getPreparationVsSoldVsWasted with product names ---
-  const productNameById = new Map(current.products.map((p) => [p.product_id, p.name]));
   const preparationChartData: PreparationChartPoint[] = current.preparationTotals
     .map((totals) => ({
       productId: totals.productId,
-      name: productNameById.get(totals.productId) ?? totals.productId,
+      name: totals.name,
       prepared: totals.preparedQuantity,
       sold: totals.soldQuantity,
       wasted: totals.wastedQuantity,
@@ -183,8 +185,10 @@ export default async function DashboardOverviewPage({
   const totalPrepared = current.preparationTotals.reduce((sum, p) => sum + p.preparedQuantity, 0);
   const totalSold = current.preparationTotals.reduce((sum, p) => sum + p.soldQuantity, 0);
   const totalWasted = current.preparationTotals.reduce((sum, p) => sum + p.wastedQuantity, 0);
-  const preparationWastagePct = totalPrepared > 0 ? (totalWasted / totalPrepared) * 100 : 0;
-  const sellThroughPct = totalPrepared > 0 ? (totalSold / totalPrepared) * 100 : 0;
+  const preparationUnits = new Set(current.preparationTotals.flatMap((row) => row.preparationUnit ?? []));
+  const preparationWastagePct = preparationUnits.size === 1 && totalPrepared > 0
+    ? (totalWasted / totalPrepared) * 100
+    : null;
 
   // --- Management Attention: the two approved threshold-free insights ---
   const departmentsOverBenchmark = current.departments.filter((dept) => dept.variance > 0);
@@ -283,22 +287,22 @@ export default async function DashboardOverviewPage({
               </div>
               <div className="bg-secondary rounded-xl p-3">
                 <p className="text-muted-foreground text-[11px]">Wastage %</p>
-                <p className="num text-danger mt-1 text-lg font-bold">{pct(preparationWastagePct)}</p>
+                <p className="num text-danger mt-1 text-lg font-bold">{preparationWastagePct === null ? "—" : pct(preparationWastagePct)}</p>
               </div>
               <div className="bg-secondary rounded-xl p-3">
-                <p className="text-muted-foreground text-[11px]">Sell-through %</p>
-                <p className="num text-success mt-1 text-lg font-bold">{pct(sellThroughPct)}</p>
+                <p className="text-muted-foreground text-[11px]">Units Sold</p>
+                <p className="num text-success mt-1 text-lg font-bold">{num(totalSold)}</p>
               </div>
             </div>
           </div>
           <p className="text-muted-foreground mt-4 text-xs">
             <span className="bg-warning mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle" />
-            Based on tracked preparation items only ({current.preparationTotals.length} of{" "}
-            {current.products.length} menu products) — not every restaurant product.
+            Preparation and wastage are grouped by preparation item. Sales are grouped by menu product.
           </p>
         </div>
 
         <div className="flex flex-col gap-4">
+          <PreparedVsSoldTrendChart data={preparationTrend} />
           <ManpowerOverview attendance={current.attendance} departments={current.departments} />
           <BreakageSummary
             totalCost={current.breakageCost}

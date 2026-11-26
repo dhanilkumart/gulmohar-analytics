@@ -1,3 +1,5 @@
+import { getDashboardSalesScope } from "@/lib/auth/dashboard-sales-scope";
+import type { SalesScope } from "@/lib/data/sales";
 import { BadgePercent, ReceiptText } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { DeltaBadge, MetricCard } from "@/components/dashboard/ui-kit";
@@ -11,7 +13,7 @@ import { CategoryPerformanceChart, type CategoryPerformancePoint } from "@/compo
 import { ProductPerformanceTable, type ProductSalesRow } from "@/components/dashboard/product-performance-table";
 import { inr, num } from "@/lib/format";
 import { parseGlobalRangeParams, type RawSearchParams } from "@/lib/date-range-params";
-import { getCategories } from "@/lib/data";
+import { getCategoriesFromDatabase } from "@/lib/data/categories";
 import {
   getSalesSummary,
   getOrderHealth,
@@ -34,20 +36,20 @@ import {
  * concrete range. Every field comes from an existing analytics function
  * — see the data-contract mapping in the integration report.
  */
-async function getSalesPageData(range: DateRange) {
+async function getSalesPageData(range: DateRange, scope: SalesScope) {
   const [salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings, kpiTrends] =
     await Promise.all([
-      getSalesSummary(range),
-      getOrderHealth(range),
-      getSalesTrend(range),
-      getOrdersTrend(range),
-      getHourlySales(range),
-      getSalesByOrderType(range),
-      getSalesByPaymentMethod(range),
-      getProductProfitability(range),
-      getCategories(),
-      getItemSalesRanking(range),
-      getDailySalesKpiTrends(range),
+      getSalesSummary(range, scope),
+      getOrderHealth(range, scope),
+      getSalesTrend(range, undefined, scope),
+      getOrdersTrend(range, undefined, scope),
+      getHourlySales(range, scope),
+      getSalesByOrderType(range, scope),
+      getSalesByPaymentMethod(range, scope),
+      getProductProfitability(range, scope),
+      getCategoriesFromDatabase(scope),
+      getItemSalesRanking(range, scope),
+      getDailySalesKpiTrends(range, scope),
     ]);
 
   return { salesSummary, orderHealth, salesTrend, ordersTrend, hourlySales, byOrderType, byPaymentMethod, productProfitability, categories, itemRankings, kpiTrends };
@@ -76,12 +78,14 @@ export default async function SalesPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const resolvedRange = parseGlobalRangeParams(await searchParams);
+  const params = await searchParams;
+  const resolvedRange = parseGlobalRangeParams(params);
+  const scope = await getDashboardSalesScope(params.outletId);
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous] = await Promise.all([
-    getSalesPageData(range),
-    comparison === "previous" && previousRange ? getSalesPageData(previousRange) : Promise.resolve(null),
+    getSalesPageData(range, scope),
+    comparison === "previous" && previousRange ? getSalesPageData(previousRange, scope) : Promise.resolve(null),
   ]);
 
   const deltas = previous

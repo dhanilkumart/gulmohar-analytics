@@ -13,14 +13,10 @@ export interface PreparationChartPoint {
   wasted: number;
 }
 
-/**
- * Prepared/Sold/Wasted bar chart for the tracked preparation products.
- * `data` is a server-side join of `getPreparationVsSoldVsWasted()` with
- * product names (via `getProducts()`).
- */
+/** Recorded preparation, sales and wastage for the selected range. */
 export function FoodPrepWastageChart({ data }: { data: PreparationChartPoint[] }) {
   if (data.length === 0) {
-    return <EmptyState message="No preparation data recorded for the selected period." />;
+    return <EmptyState message="No preparation, sales or wastage recorded for the selected period." />;
   }
 
   return (

@@ -1,6 +1,9 @@
 import "server-only";
 
 import { getPreparation } from "@/lib/data";
+import { prisma } from "@/lib/db/client";
+import { getSalesOutletFilter, type SalesScope } from "@/lib/data/sales";
+import { getSaleItemsInRange } from "./sales";
 import type { Preparation } from "@/types";
 import {
   filterByDateRange,
@@ -11,69 +14,96 @@ import {
   type TrendGranularity,
 } from "./date-range";
 
-/**
- * preparation.json only tracks a subset of products (8 of 60 in the mock
- * data). Callers should not assume every product has preparation history.
- */
 export interface PreparationTotals {
   productId: string;
+  name: string;
+  preparationUnit?: string;
   preparedQuantity: number;
   soldQuantity: number;
   wastedQuantity: number;
-  /** wasted / prepared * 100 (business-rules.md), 0 when nothing was prepared. */
-  wastagePercentage: number;
-  /** sold / prepared * 100 (business-rules.md), 0 when nothing was prepared. */
-  sellThroughPercentage: number;
 }
 
 export async function getPreparationInRange(range: DateRange): Promise<Preparation[]> {
-  const preparation = await getPreparation();
-  return filterByDateRange(preparation, range, (row) => row.date);
+  return filterByDateRange(await getPreparation(), range, (row) => row.date);
 }
 
-/** Aggregate prepared/sold/wasted quantities per product for a date range. */
+async function getPreparationChartRecords(range: DateRange, scope?: SalesScope) {
+  const where = {
+    outlet: scope?.organizationId ? { organizationId: scope.organizationId } : undefined,
+    outletId: getSalesOutletFilter(scope),
+    date: {
+      gte: new Date(range.from + "T00:00:00.000Z"),
+      lte: new Date(range.to + "T23:59:59.999Z"),
+    },
+  };
+  return Promise.all([
+    prisma.preparationLog.findMany({
+      where,
+      select: { date: true, quantity: true, preparationItem: { select: { id: true, name: true, unit: true } } },
+    }),
+    prisma.wastageRecord.findMany({
+      where,
+      select: { date: true, wastedQuantity: true, preparationItem: { select: { id: true, name: true, unit: true } } },
+    }),
+    getSaleItemsInRange(range, scope),
+  ]);
+}
+
+/** Chart rows for recorded preparation items and sold menu products. */
 export async function getPreparationVsSoldVsWasted(
-  range: DateRange
+  range: DateRange,
+  scope?: SalesScope
 ): Promise<PreparationTotals[]> {
-  const preparationInRange = await getPreparationInRange(range);
-
-  const byProduct = new Map<
-    string,
-    { preparedQuantity: number; soldQuantity: number; wastedQuantity: number }
-  >();
-
-  for (const row of preparationInRange) {
-    const existing = byProduct.get(row.product_id) ?? {
-      preparedQuantity: 0,
-      soldQuantity: 0,
-      wastedQuantity: 0,
+  const [prepared, wasted, sold] = await getPreparationChartRecords(range, scope);
+  const totals = new Map<string, PreparationTotals>();
+  function row(productId: string, name: string, preparationUnit?: string) {
+    const existing = totals.get(productId) ?? {
+      productId, name, preparationUnit, preparedQuantity: 0, soldQuantity: 0, wastedQuantity: 0,
     };
-    existing.preparedQuantity += row.prepared_quantity;
-    existing.soldQuantity += row.sold_quantity;
-    existing.wastedQuantity += row.wasted_quantity;
-    byProduct.set(row.product_id, existing);
+    totals.set(productId, existing);
+    return existing;
   }
 
-  return Array.from(byProduct.entries()).map(([productId, totals]) => ({
-    productId,
-    ...totals,
-    wastagePercentage:
-      totals.preparedQuantity > 0
-        ? (totals.wastedQuantity / totals.preparedQuantity) * 100
-        : 0,
-    sellThroughPercentage:
-      totals.preparedQuantity > 0
-        ? (totals.soldQuantity / totals.preparedQuantity) * 100
-        : 0,
-  }));
+  for (const record of prepared) {
+    const item = record.preparationItem;
+    row("prep:" + item.id, item.name + " (" + item.unit + ")", item.unit).preparedQuantity += Number(record.quantity);
+  }
+  for (const record of wasted) {
+    const item = record.preparationItem;
+    row("prep:" + item.id, item.name + " (" + item.unit + ")", item.unit).wastedQuantity += Number(record.wastedQuantity);
+  }
+  for (const item of sold) {
+    const name = item.product_name ?? item.item_name;
+    if (name) {
+      const key = item.product_id ? "product:" + item.product_id : "sold-name:" + name;
+      row(key, name).soldQuantity += item.quantity;
+    }
+  }
+
+  return [...totals.values()];
 }
 
 /** Full daily preparation history for a single product, sorted by date. */
-export async function getPreparationHistory(productId: string): Promise<Preparation[]> {
+export async function getPreparationHistory(
+  productId: string,
+  scope?: SalesScope
+): Promise<Preparation[]> {
   const preparation = await getPreparation();
-  return preparation
+  const history = preparation
     .filter((row) => row.product_id === productId)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const first = history[0];
+  const last = history.at(-1);
+  if (!first || !last) return history;
+
+  const items = await getSaleItemsInRange({ from: first.date, to: last.date }, scope);
+  const soldByDay = new Map<string, number>();
+  for (const item of items) {
+    if (item.product_id === productId) {
+      soldByDay.set(item.date, (soldByDay.get(item.date) ?? 0) + item.quantity);
+    }
+  }
+  return history.map((row) => ({ ...row, sold_quantity: soldByDay.get(row.date) ?? 0 }));
 }
 
 export interface WastagePercentageTrendPoint {
@@ -125,35 +155,29 @@ export async function getWastagePercentageTrend(
 
 export interface PreparationTrendPoint {
   period: string;
-  preparedQuantity: number;
+  preparedQuantity: number | null;
   soldQuantity: number;
-  wastedQuantity: number;
+  wastedQuantity: number | null;
 }
 
-/**
- * Prepared/sold/wasted quantities over time, summed across the 8 tracked
- * preparation products per period (not restaurant-wide). This is the one
- * genuinely-missing aggregation needed for a "Prepared vs Sold by Day"
- * chart — `getWastagePercentageTrend` above already sums prepared/wasted
- * per period but not sold. Added as a direct sibling of that function,
- * reusing the exact same `sumByPeriod`/`enumeratePeriods` pattern (no new
- * formula, no new business rule — just one more already-existing field
- * from the same `preparation.json` rows).
- */
+/** Prepared, sold and wasted quantities over the selected periods. */
 export async function getPreparationTrend(
   range: DateRange,
-  granularity: TrendGranularity = resolveTrendGranularity(range)
+  granularity: TrendGranularity = resolveTrendGranularity(range),
+  scope?: SalesScope
 ): Promise<PreparationTrendPoint[]> {
-  const preparationInRange = await getPreparationInRange(range);
-
-  const preparedSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.prepared_quantity);
-  const soldSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.sold_quantity);
-  const wastedSums = sumByPeriod(preparationInRange, granularity, (row) => row.date, (row) => row.wasted_quantity);
+  const [prepared, wasted, sold] = await getPreparationChartRecords(range, scope);
+  const units = new Set([...prepared, ...wasted].map((row) => row.preparationItem.unit));
+  const hasMixedUnits = units.size > 1;
+  const dateKey = (row: { date: Date }) => row.date.toISOString().slice(0, 10);
+  const preparedSums = sumByPeriod(prepared, granularity, dateKey, (row) => Number(row.quantity));
+  const wastedSums = sumByPeriod(wasted, granularity, dateKey, (row) => Number(row.wastedQuantity));
+  const soldSums = sumByPeriod(sold, granularity, (item) => item.date, (item) => item.quantity);
 
   return enumeratePeriods(range, granularity).map((period) => ({
     period,
-    preparedQuantity: preparedSums.get(period) ?? 0,
+    preparedQuantity: hasMixedUnits ? null : (preparedSums.get(period) ?? 0),
     soldQuantity: soldSums.get(period) ?? 0,
-    wastedQuantity: wastedSums.get(period) ?? 0,
+    wastedQuantity: hasMixedUnits ? null : (wastedSums.get(period) ?? 0),
   }));
 }

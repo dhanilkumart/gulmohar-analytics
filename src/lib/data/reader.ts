@@ -9,8 +9,7 @@ import path from "node:path";
  * demo dataset. This is the ONLY module in the app that knows that path.
  *
  * `server-only` guarantees a build-time error if any of this ever gets
- * imported into a Client Component bundle — the raw JSON (sales.json /
- * sale-items.json in particular) must never reach the browser.
+ * imported into a Client Component bundle — the raw JSON must never reach the browser.
  */
 const MOCK_DATA_DIR = path.join(process.cwd(), "mock_data");
 

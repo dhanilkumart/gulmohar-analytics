@@ -2,17 +2,10 @@ import "server-only";
 
 import type { SaleItem } from "@/types";
 import { prisma } from "@/lib/db/client";
-import { createCachedLoader, getDataSourceMode } from "./reader";
-import type { SalesFilterOptions } from "./sales";
+import { getSalesOutletFilter, type SalesFilterOptions } from "./sales";
 
 /**
- * sale-items.json has ~341k rows (~44MB raw) — loaded and cached in-memory
- * once per server process in mock mode.
- */
-const loadSaleItemsMock = createCachedLoader<SaleItem[]>("sale-items.json");
-
-/**
- * Loads sale items from PostgreSQL (when DATA_SOURCE=database) or from mock data (default).
+ * Loads sale items from PostgreSQL.
  *
  * Business Rules:
  * - Only items belonging to orders with status = 'Success' are returned.
@@ -23,19 +16,10 @@ const loadSaleItemsMock = createCachedLoader<SaleItem[]>("sale-items.json");
  * - If database access fails, a clear error is thrown (never silent mock fallback).
  */
 export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleItem[]> {
-  const mode = getDataSourceMode();
-
-  if (mode === "mock") {
-    // In mock mode, sale-items do not have date/outlet directly on them;
-    // mock analytics joins via bill_id through getSalesInRange().
-    return loadSaleItemsMock();
-  }
-
-  // Database mode: Read from PostgreSQL via Prisma
   try {
     const orderWhereClause: {
       status: string;
-      outletId?: string;
+      outletId?: ReturnType<typeof getSalesOutletFilter>;
       outlet?: {
         organizationId: string;
       };
@@ -45,14 +29,11 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
       };
     } = {
       status: "Success",
+      outletId: getSalesOutletFilter(options),
     };
 
     if (options?.organizationId) {
       orderWhereClause.outlet = { organizationId: options.organizationId };
-    }
-
-    if (options?.outletId && options.outletId !== "all") {
-      orderWhereClause.outletId = options.outletId;
     }
 
     if (options?.startDate || options?.endDate) {
@@ -73,11 +54,13 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
         salesOrder: {
           select: {
             petpoojaOrderId: true,
+            orderDate: true,
           },
         },
         product: {
           select: {
             productCode: true,
+            name: true,
           },
         },
       },
@@ -95,15 +78,16 @@ export async function getSaleItems(options?: SalesFilterOptions): Promise<SaleIt
       return {
         sale_item_id: item.id,
         bill_id: item.salesOrder.petpoojaOrderId,
+        date: item.salesOrder.orderDate.toISOString().slice(0, 10),
         product_id: productId,
         item_name: item.itemName,
+        product_name: item.product?.name,
         quantity,
         unit_price: unitPrice,
         amount,
       };
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[DATA_SOURCE=database] Failed to load sale items from PostgreSQL: ${message}`);
+    throw new Error("Failed to load sale items from PostgreSQL", { cause: error });
   }
 }

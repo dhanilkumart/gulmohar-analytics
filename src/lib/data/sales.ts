@@ -2,54 +2,43 @@ import "server-only";
 
 import type { Sale } from "@/types";
 import { prisma } from "@/lib/db/client";
-import { createCachedLoader, getDataSourceMode } from "./reader";
 
 /**
- * Filter options for reading sales from PostgreSQL or mock data.
+ * Filter options for reading sales from PostgreSQL.
  */
-export interface SalesFilterOptions {
+export interface SalesScope {
   organizationId?: string;
   outletId?: string;
+  authorizedOutletIds?: string[];
+}
+
+export function getSalesOutletFilter(scope?: SalesScope) {
+  if (scope?.authorizedOutletIds !== undefined) {
+    return { in: scope.authorizedOutletIds };
+  }
+  return scope?.outletId === "all" ? undefined : scope?.outletId;
+}
+
+export interface SalesFilterOptions extends SalesScope {
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
 }
 
 /**
- * sales.json has ~179k rows (~30MB raw). This is loaded and cached
- * in-memory once per server process in mock mode.
- */
-const loadSalesMock = createCachedLoader<Sale[]>("sales.json");
-
-/**
- * Loads sales from PostgreSQL (when DATA_SOURCE=database) or from mock data (default).
+ * Loads sales from PostgreSQL.
  *
  * Business Rules:
  * - Only orders with status = 'Success' are returned.
  * - Cancelled orders are strictly excluded from revenue/order counts.
- * - In database mode, missing financial values (core_total, discount_total, total_amount)
+ * - Missing financial values (core_total, discount_total, total_amount)
  *   are preserved without inventing artificial numbers.
  * - If database access fails, a clear error is thrown (never silent mock fallback).
  */
 export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
-  const mode = getDataSourceMode();
-
-  if (mode === "mock") {
-    let sales = loadSalesMock();
-    if (options?.startDate || options?.endDate) {
-      sales = sales.filter((sale) => {
-        if (options.startDate && sale.date < options.startDate) return false;
-        if (options.endDate && sale.date > options.endDate) return false;
-        return true;
-      });
-    }
-    return sales;
-  }
-
-  // Database mode: Read from PostgreSQL via Prisma
   try {
     const whereClause: {
       status: string;
-      outletId?: string;
+      outletId?: ReturnType<typeof getSalesOutletFilter>;
       outlet?: {
         organizationId: string;
       };
@@ -59,14 +48,11 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
       };
     } = {
       status: "Success",
+      outletId: getSalesOutletFilter(options),
     };
 
     if (options?.organizationId) {
       whereClause.outlet = { organizationId: options.organizationId };
-    }
-
-    if (options?.outletId && options.outletId !== "all") {
-      whereClause.outletId = options.outletId;
     }
 
     if (options?.startDate || options?.endDate) {
@@ -119,7 +105,6 @@ export async function getSales(options?: SalesFilterOptions): Promise<Sale[]> {
       };
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[DATA_SOURCE=database] Failed to load sales from PostgreSQL: ${message}`);
+    throw new Error("Failed to load sales from PostgreSQL", { cause: error });
   }
 }

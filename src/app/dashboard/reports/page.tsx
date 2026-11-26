@@ -1,3 +1,5 @@
+import { getDashboardSalesScope } from "@/lib/auth/dashboard-sales-scope";
+import type { SalesScope } from "@/lib/data/sales";
 import {
   CalendarX2,
   ChefHat,
@@ -42,15 +44,15 @@ import {
  * Profitability, Wastage, Breakage and Manpower pages — it introduces no
  * new aggregation logic, only composes existing results.
  */
-async function getReportsPageData(range: DateRange) {
+async function getReportsPageData(range: DateRange, scope: SalesScope) {
   const [contribution, salesSummary, preparationTotals, breakageInRange, attendanceInRange, productProfitability] =
     await Promise.all([
-      getOperationalContributionForRange(range),
-      getSalesSummary(range),
-      getPreparationVsSoldVsWasted(range),
+      getOperationalContributionForRange(range, scope),
+      getSalesSummary(range, scope),
+      getPreparationVsSoldVsWasted(range, scope),
       getBreakageInRange(range),
       getAttendanceInRange(range),
-      getProductProfitability(range),
+      getProductProfitability(range, scope),
     ]);
 
   const preparedQuantity = preparationTotals.reduce((sum, p) => sum + p.preparedQuantity, 0);
@@ -115,12 +117,14 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const resolvedRange = parseGlobalRangeParams(await searchParams);
+  const params = await searchParams;
+  const resolvedRange = parseGlobalRangeParams(params);
+  const scope = await getDashboardSalesScope(params.outletId);
   const { range, comparison, previousRange } = resolvedRange;
 
   const [current, previous] = await Promise.all([
-    getReportsPageData(range),
-    comparison === "previous" && previousRange ? getReportsPageData(previousRange) : Promise.resolve(null),
+    getReportsPageData(range, scope),
+    comparison === "previous" && previousRange ? getReportsPageData(previousRange, scope) : Promise.resolve(null),
   ]);
 
   const deltas = previous ? buildDeltas(current, previous) : null;

@@ -1,14 +1,13 @@
 /**
- * Structure of mock_data/sale-items.json (line items per bill).
- *
- * Note: sale items do not carry their own `date` — join to Sale via
- * `bill_id` to filter by date range.
+ * Sales order line item returned by the data layer.
  */
 export interface SaleItem {
   sale_item_id: string;
+  date: string; // YYYY-MM-DD, from the parent order
   bill_id: string;
   product_id: string;
   item_name?: string;
+  product_name?: string;
   quantity: number;
   unit_price: number;
   amount: number;

@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getProducts } from "@/lib/data";
+import { getProductsFromDatabase } from "@/lib/data/products";
+import type { SalesScope } from "@/lib/data/sales";
 import type { Product, SaleItem } from "@/types";
 import { getSaleItemsInRange } from "./sales";
 import type { DateRange } from "./date-range";
@@ -49,10 +50,10 @@ export function getGrossFoodMargin(netSales: number | null, foodCost: number | n
  * Per-product profitability for a date range: quantity sold, revenue,
  * food cost and gross margin, joined from sale-items + products.
  */
-export async function getProductProfitability(range: DateRange): Promise<ProductProfitability[]> {
+export async function getProductProfitability(range: DateRange, scope?: SalesScope): Promise<ProductProfitability[]> {
   const [saleItemsInRange, products] = await Promise.all([
-    getSaleItemsInRange(range),
-    getProducts(),
+    getSaleItemsInRange(range, scope),
+    getProductsFromDatabase(scope),
   ]);
 
   const productsById = new Map(products.map((p) => [p.product_id, p]));

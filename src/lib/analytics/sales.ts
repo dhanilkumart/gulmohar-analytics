@@ -2,9 +2,8 @@ import "server-only";
 
 import { getSales, getSaleItems } from "@/lib/data";
 import { prisma } from "@/lib/db/client";
-import { getDataSourceMode } from "@/lib/data/reader";
 import type { Sale, SaleItem } from "@/types";
-import type { SalesFilterOptions } from "@/lib/data/sales";
+import { getSalesOutletFilter, type SalesScope } from "@/lib/data/sales";
 import {
   filterByDateRange,
   resolveTrendGranularity,
@@ -48,36 +47,25 @@ export interface OrderHealthMetrics {
 /** Sales (bill headers) within a date range with optional scope. */
 export async function getSalesInRange(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<Sale[]> {
   const sales = await getSales({
+    ...options,
     startDate: range.from,
     endDate: range.to,
-    organizationId: options?.organizationId,
-    outletId: options?.outletId,
   });
   return filterByDateRange(sales, range, (sale) => sale.date);
 }
 
-/**
- * Sale line items within a date range. `sale-items.json` has no `date` of
- * its own, so this joins through `sales` on `bill_id` — the intended way
- * to scope large item-level data without loading everything into a
- * component.
- */
 export async function getSaleItemsInRange(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<SaleItem[]> {
-  const salesInRange = await getSalesInRange(range, options);
-  const billIdsInRange = new Set(salesInRange.map((sale) => sale.bill_id));
-  const saleItems = await getSaleItems({
+  return getSaleItems({
+    ...options,
     startDate: range.from,
     endDate: range.to,
-    organizationId: options?.organizationId,
-    outletId: options?.outletId,
   });
-  return saleItems.filter((item) => billIdsInRange.has(item.bill_id));
 }
 
 export function getGrossSales(sales: Sale[]): number | null {
@@ -138,7 +126,7 @@ export function getItemQuantitySold(saleItems: SaleItem[]): number {
  */
 export async function getSalesSummary(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<SalesSummary> {
   const [salesInRange, saleItemsInRange] = await Promise.all([
     getSalesInRange(range, options),
@@ -174,7 +162,7 @@ export interface SalesTrendPoint {
 export async function getSalesTrend(
   range: DateRange,
   granularity: TrendGranularity = resolveTrendGranularity(range),
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<SalesTrendPoint[]> {
   const salesInRange = await getSalesInRange(range, options);
   const sums = sumByPeriod(
@@ -198,7 +186,7 @@ export interface OrdersTrendPoint {
 export async function getOrdersTrend(
   range: DateRange,
   granularity: TrendGranularity = resolveTrendGranularity(range),
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<OrdersTrendPoint[]> {
   const salesInRange = await getSalesInRange(range, options);
   const sums = sumByPeriod(
@@ -226,7 +214,7 @@ export interface SalesByOrderType {
  */
 export async function getSalesByOrderType(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<SalesByOrderType[]> {
   const salesInRange = await getSalesInRange(range, options);
   const byType = new Map<string, { netSales: number; orderCount: number }>();
@@ -255,7 +243,7 @@ export interface SalesByPaymentMethod {
  */
 export async function getSalesByPaymentMethod(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<SalesByPaymentMethod[]> {
   const salesInRange = await getSalesInRange(range, options);
   const byMethod = new Map<string, { netSales: number; orderCount: number }>();
@@ -288,7 +276,7 @@ export interface HourlySales {
  */
 export async function getHourlySales(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<HourlySales[]> {
   const salesInRange = await getSalesInRange(range, options);
   const byHour = new Map<number, { netSales: number; orderCount: number }>();
@@ -325,7 +313,7 @@ export interface ItemSalesRanking {
  */
 export async function getItemSalesRanking(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<ItemSalesRanking[]> {
   const saleItems = await getSaleItemsInRange(range, options);
 
@@ -372,46 +360,18 @@ export async function getItemSalesRanking(
  * Computes Order Health metrics and status distribution for a given date range.
  *
  * Business Rules:
- * - In database mode: Aggregates real Petpooja order statuses from PostgreSQL.
+ * - Aggregates Petpooja order statuses from PostgreSQL.
  *   - Success: Completed, revenue-generating orders.
  *   - Complimentary: Completed operational orders with ₹0 billed or 100% comp; separated from ordinary sales.
  *   - Cancelled: Cancelled orders, excluded from completed sales and revenue.
  *   - Failed: Tracked if distinct 'Failed' status exists in DB; currently 0 in Petpooja dataset.
- * - In mock mode: All mock sales represent completed successful orders.
  */
 export async function getOrderHealth(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<OrderHealthMetrics> {
-  const mode = getDataSourceMode();
-
-  if (mode === "mock") {
-    const salesInRange = await getSalesInRange(range, options);
-    const count = salesInRange.length;
-    const totalAmount = salesInRange.reduce((sum, s) => sum + (s.net_amount ?? 0), 0);
-    return {
-      totalOrders: count,
-      successfulOrders: count,
-      complimentaryOrders: 0,
-      cancelledOrders: 0,
-      failedOrders: 0,
-      cancellationRate: 0,
-      failureRate: 0,
-      statusBreakdown: count > 0 ? [
-        {
-          status: "Success",
-          label: "Successful",
-          count,
-          percentage: 100,
-          totalAmount,
-        },
-      ] : [],
-    };
-  }
-
-  // Database mode
   const whereClause: {
-    outletId?: string;
+    outletId?: ReturnType<typeof getSalesOutletFilter>;
     outlet?: {
       organizationId: string;
     };
@@ -419,15 +379,12 @@ export async function getOrderHealth(
       gte?: Date;
       lte?: Date;
     };
-  } = {};
+  } = { outletId: getSalesOutletFilter(options) };
 
   if (options?.organizationId) {
     whereClause.outlet = { organizationId: options.organizationId };
   }
 
-  if (options?.outletId && options.outletId !== "all") {
-    whereClause.outletId = options.outletId;
-  }
 
   if (range.from || range.to) {
     whereClause.orderDate = {};
@@ -444,6 +401,8 @@ export async function getOrderHealth(
     where: whereClause,
     _count: { id: true },
     _sum: { totalAmount: true },
+  }).catch((error: unknown) => {
+    throw new Error("Failed to load order health from PostgreSQL", { cause: error });
   });
 
   let totalOrders = 0;
@@ -536,58 +495,13 @@ export interface DailySalesKpiTrends {
  */
 export async function getDailySalesKpiTrends(
   range: DateRange,
-  options?: Pick<SalesFilterOptions, "organizationId" | "outletId">
+  options?: SalesScope
 ): Promise<DailySalesKpiTrends> {
-  const mode = getDataSourceMode();
   const allDays = enumeratePeriods(range, "day");
 
-  if (mode === "mock") {
-    const [salesInRange, saleItemsInRange] = await Promise.all([
-      getSalesInRange(range, options),
-      getSaleItemsInRange(range, options),
-    ]);
-
-    const salesByDay = sumByPeriod(
-      salesInRange,
-      "day",
-      (s) => s.date,
-      (s) => (s.net_amount !== null ? s.net_amount : 0)
-    );
-    const ordersByDay = sumByPeriod(
-      salesInRange,
-      "day",
-      (s) => s.date,
-      () => 1
-    );
-
-    const billDateMap = new Map(salesInRange.map((s) => [s.bill_id, s.date]));
-    const itemsByDay = new Map<string, number>();
-    for (const item of saleItemsInRange) {
-      const date = billDateMap.get(item.bill_id);
-      if (date) {
-        itemsByDay.set(date, (itemsByDay.get(date) ?? 0) + item.quantity);
-      }
-    }
-
-    let hasNonZero = false;
-    const points: DailySalesKpiPoint[] = allDays.map((d) => {
-      const netSales = salesByDay.get(d) ?? 0;
-      const totalOrders = ordersByDay.get(d) ?? 0;
-      const aov = totalOrders > 0 ? netSales / totalOrders : 0;
-      const itemsSold = itemsByDay.get(d) ?? 0;
-      if (netSales > 0 || totalOrders > 0 || itemsSold > 0) {
-        hasNonZero = true;
-      }
-      return { date: d, netSales, totalOrders, aov, itemsSold };
-    });
-
-    return { points, hasData: hasNonZero && points.length > 0 };
-  }
-
-  // Database mode: PostgreSQL via Prisma
   try {
     const orderWhereClause: {
-      outletId?: string;
+      outletId?: ReturnType<typeof getSalesOutletFilter>;
       outlet?: {
         organizationId: string;
       };
@@ -595,13 +509,10 @@ export async function getDailySalesKpiTrends(
         gte?: Date;
         lte?: Date;
       };
-    } = {};
+    } = { outletId: getSalesOutletFilter(options) };
 
     if (options?.organizationId) {
       orderWhereClause.outlet = { organizationId: options.organizationId };
-    }
-    if (options?.outletId && options.outletId !== "all") {
-      orderWhereClause.outletId = options.outletId;
     }
     if (range.from || range.to) {
       orderWhereClause.orderDate = {};
@@ -675,8 +586,7 @@ export async function getDailySalesKpiTrends(
 
     return { points, hasData: hasNonZero && points.length > 0 };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[DATA_SOURCE=database] Failed to compute daily sales KPI trends: ${message}`);
+    throw new Error("Failed to load daily sales KPI trends from PostgreSQL", { cause: error });
   }
 }
 

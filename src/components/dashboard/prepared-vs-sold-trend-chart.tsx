@@ -6,16 +6,16 @@ import { ChartCard, EmptyState } from "@/components/dashboard/ui-kit";
 import { num } from "@/lib/format";
 import type { PreparationTrendPoint } from "@/lib/analytics";
 
-/**
- * "Prepared vs Sold by Day" — from the new `getPreparationTrend(range)`
- * (src/lib/analytics/preparation.ts), summed across the tracked
- * preparation products per period.
- */
+/** Prepared and sold quantities across the selected periods. */
 export function PreparedVsSoldTrendChart({ data }: { data: PreparationTrendPoint[] }) {
-  const hasData = data.some((point) => point.preparedQuantity > 0);
+  const hasData = data.some((point) => (point.preparedQuantity ?? 0) > 0 || point.soldQuantity > 0);
+
+  const hasMixedUnits = data.some((point) => point.preparedQuantity === null);
 
   return (
-    <ChartCard title="Prepared vs Sold by Day" description="Daily preparation against sell-through.">
+    <ChartCard title="Prepared vs Sold by Day" description={hasMixedUnits
+      ? "Daily units sold. Preparation totals are omitted when records use different units."
+      : "Daily recorded preparation and units sold."}>
       {hasData ? (
         <div className="h-[260px] w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -29,13 +29,15 @@ export function PreparedVsSoldTrendChart({ data }: { data: PreparationTrendPoint
                 labelFormatter={(label) => formatPeriodLabel(String(label))}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="preparedQuantity" name="Prepared" fill="var(--color-chart-5)" radius={[6, 6, 0, 0]} />
+              {!hasMixedUnits && (
+                <Bar dataKey="preparedQuantity" name="Prepared" fill="var(--color-chart-5)" radius={[6, 6, 0, 0]} />
+              )}
               <Bar dataKey="soldQuantity" name="Sold" fill="var(--color-chart-1)" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       ) : (
-        <EmptyState message="No preparation data recorded for the selected period." />
+        <EmptyState message="No preparation or sales recorded for the selected period." />
       )}
     </ChartCard>
   );
