@@ -1,0 +1,35 @@
+# Deliberately separate from the application/database deployment.
+services:
+  petpooja-sync:
+    profiles: [sync]
+    image: ${SYNC_IMAGE:-gulmohar-petpooja-sync:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.sync
+    init: true
+    restart: "no"
+    stop_grace_period: 30s
+    env_file:
+      - ${SYNC_ENV_FILE:-.env.sync}
+    environment:
+      SYNC_HISTORY_DIR: /state
+    volumes:
+      - ${SYNC_STATE_DIR:-./tmp/petpooja-sync-state}:/state
+    networks:
+      - sync-db
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  sync-db:
+    external: true
+    name: ${SYNC_DB_NETWORK:-shared-db-net}

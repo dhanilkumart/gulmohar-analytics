@@ -1,0 +1,22 @@
+FROM node:22-alpine
+
+RUN apk add --no-cache openssl
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY prisma/schema.prisma prisma/schema.prisma
+COPY prisma.config.ts ./
+# Build-only dummy target. No connection, migration or seed is executed.
+RUN DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build npm ci --no-audit --no-fund \
+    && DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build npx --no-install prisma generate
+COPY tsconfig.json ./
+COPY src/config/restaurant.ts src/config/restaurant.ts
+COPY src/lib/db/client.ts src/lib/db/client.ts
+COPY src/lib/petpooja/ src/lib/petpooja/
+COPY src/types/ src/types/
+COPY scripts/petpooja-daily-sync.ts scripts/petpooja-sync.ts scripts/
+
+ENV NODE_ENV=production
+USER node
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["node", "--import", "tsx", "scripts/petpooja-daily-sync.ts"]
+CMD ["--daily"]

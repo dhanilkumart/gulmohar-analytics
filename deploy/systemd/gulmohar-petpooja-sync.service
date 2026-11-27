@@ -1,0 +1,22 @@
+[Unit]
+Description=Gulmohar daily Petpooja order synchronization
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/apps/gulmohar-analytics
+ExecStart=/usr/bin/docker compose --env-file /opt/apps/gulmohar-analytics/.env.sync -f /opt/apps/gulmohar-analytics/compose.sync.yaml run --rm --no-deps --name gulmohar-petpooja-sync-scheduled petpooja-sync --daily
+# ExecStopPost also runs on startup failure/timeout; this name is reserved for this unit.
+ExecStopPost=-/usr/bin/docker stop --time 25 gulmohar-petpooja-sync-scheduled
+ExecStopPost=-/usr/bin/docker rm -f gulmohar-petpooja-sync-scheduled
+TimeoutStartSec=35min
+TimeoutStopSec=40s
+KillMode=control-group
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -53,13 +53,7 @@ The synchronization process consists of:
 
 ### Synchronization Automation Status
 
-**Current status: Manual synchronization**
-
-The initial integration and historical backfill were triggered manually through the command line.
-
-An automatic daily synchronization scheduler was not present in the implementation audit.
-
-No cron job, recurring scheduler, or background synchronization process should be assumed to exist until separately implemented and verified.
+The standalone daily worker and host systemd templates are implemented. Production installation and timer activation require separate approval and verification. See [worker operations](petpooja-worker.md) for configuration, deployment, history and recovery.
 
 ## 3. Synchronization Command
 
@@ -71,7 +65,7 @@ The historical synchronization process supports date-range input.
 npm run petpooja:sync -- --from=2026-11-01 --to=2026-11-22
 ```
 
-This requests order data for the specified date range.
+This requests order data for the specified inclusive date range. Historical requests now require an explicitly sufficient `SYNC_MAX_BACKFILL_DAYS` (default 7); see worker operations before repeating older backfills.
 
 ### Synchronizing a specific date
 
@@ -79,13 +73,13 @@ This requests order data for the specified date range.
 npm run petpooja:sync -- --date=2026-11-20
 ```
 
-Use this form only if the corresponding single-date argument is supported by the current CLI implementation.
+The CLI also accepts a positional single date. All manual runs use the same PostgreSQL lock and durable history as scheduled runs.
 
 ### Default synchronization
 
 When no date arguments are supplied, the existing default synchronization behaviour is preserved.
 
-The default operational-date calculation follows the restaurant's established closing-time rules.
+The manual command defaults to yesterday in Asia/Kolkata. The daily worker (`node --import tsx scripts/petpooja-daily-sync.ts --daily`) processes yesterday, then today, followed by bounded recovery work.
 
 **Important:** The actual CLI argument implementation should be treated as the source of truth. Update these examples if the command syntax changes.
 
@@ -244,48 +238,17 @@ Unknown statuses should be handled explicitly rather than automatically classifi
 
 The following items remain outside the completed historical backfill:
 
-1. Automatic daily synchronization has not yet been implemented.
+1. Production scheduler activation and a live scheduled execution remain unverified.
 2. The October 31 operational-date rollover discrepancy needs reconciliation.
-3. Future sync monitoring and failure recovery need to be addressed when scheduling is implemented.
+3. Worker monitoring and bounded recovery are described in [worker operations](petpooja-worker.md); external alert delivery is not configured.
 4. Historical completeness depends on the dates and records actually returned by Petpooja.
 5. Menu and category integration remains a separate development task.
 
-## 11. Future Daily Synchronization
+## 11. Daily Synchronization
 
-The next planned improvement is automatic daily synchronization.
+The host timer invokes an isolated Docker worker at 23:00 Asia/Kolkata. It requests yesterday first and today second, reusing `syncDate()`, cursor pagination, normalization and transactional ingestion. Missing/unfinished requests are retried within configured limits. Scheduling never depends on dashboard rendering, Orders preview or a browser session.
 
-The intended workflow is:
-
-```text
-Scheduled Trigger
-       |
-       v
-Calculate Previous Operational Date
-       |
-       v
-Fetch Petpooja Orders
-       |
-       v
-Normalize & Validate
-       |
-       v
-Ingest into PostgreSQL
-       |
-       v
-Log Synchronization Results
-```
-
-The scheduler should:
-
-- Run after the restaurant's operational day is complete.
-- Calculate the correct previous operational date.
-- Retrieve every available page.
-- Reuse the existing normalizer and ingestion service.
-- Prevent duplicate records.
-- Record synchronization results and errors.
-- Support safe retry of failed synchronization runs.
-
-The scheduler must not be implemented as part of the dashboard page-loading process.
+The worker does not delete orders absent from later API responses. It rejects partial ingestion as success. Existing outlet/order uniqueness and atomic item replacement remain unchanged. Actual source modification timestamps have not been verified; `created_on` is a creation timestamp and cannot provide stale-response protection. See [worker operations](petpooja-worker.md) for remaining reliability limits.
 
 ## 12. Development Reference
 
@@ -313,4 +276,4 @@ PostgreSQL is the application's source of truth for normalized historical sales 
 
 ---
 
-**Documentation status:** Historical backfill completed for November 1–22, 2026 in the local development environment. Automatic daily synchronization and operational-date reconciliation remain pending.
+**Documentation status:** Historical backfill completed for November 1–22, 2026 in the local development environment. Daily-worker implementation is available; production activation and operational-date reconciliation remain pending.
