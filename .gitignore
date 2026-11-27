@@ -51,3 +51,6 @@ next-env.d.ts
 # Temporary test scripts & output dumps
 /scripts/test-petpooja-pull.ts
 /tmp/
+
+# Local-only documentation
+/docs/

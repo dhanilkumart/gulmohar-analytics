@@ -1,0 +1,19 @@
+services:
+  gulmohar-analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gulmohar-analytics
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8100:8100"
+    networks:
+      - default
+      - shared-db-net
+
+networks:
+  shared-db-net:
+    external: true
+    name: shared-db-net
