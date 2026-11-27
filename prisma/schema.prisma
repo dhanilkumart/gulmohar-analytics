@@ -1,89 +1,107 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+generator client {
+  provider = "prisma-client-js"
+}
+
+// =============================================================================
+// 1. Organization & Outlet Core
+// =============================================================================
+
 model Organization {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code             String            @unique
-  name             String
-  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  breakageItems    BreakageItem[]
-  breakageReasons  BreakageReason[]
-  categories       Category[]
-  ingredients      Ingredient[]
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique // e.g. "AG"
+  name      String   // e.g. "Ashirvad Gulmohar"
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
   outlets          Outlet[]
-  preparationItems PreparationItem[]
-  products         Product[]
   users            UserAccount[]
+  categories       Category[]
+  products         Product[]
+  ingredients      Ingredient[]
+  preparationItems PreparationItem[]
+  breakageItems    BreakageItem[]
   wastageReasons   WastageReason[]
+  breakageReasons  BreakageReason[]
 
   @@map("organizations")
 }
 
 model Outlet {
-  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String                 @map("organization_id") @db.Uuid
-  code            String                 @unique
-  name            String
-  city            String
-  address         String?
-  timezone        String                 @default("Asia/Kolkata")
-  petpoojaRestId  String?                @unique @map("petpooja_rest_id")
-  isActive        Boolean                @default(true) @map("is_active")
-  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  breakageRecords BreakageRecord[]
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   @unique // e.g. "KOZ-001", "KOZ-002", "BLR-001"
+  name           String   // e.g. "Ashirvad Gulmohar - Kozhikode 1"
+  city           String   // Informational: e.g. "Kozhikode"
+  address        String?
+  timezone       String   @default("Asia/Kolkata")
+  petpoojaRestId String?  @unique @map("petpooja_rest_id") // Nullable, verified production ID only
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  userAssignments UserOutletAssignment[]
   departments     Department[]
   employees       Employee[]
   productSettings OutletProductSetting[]
-  organization    Organization           @relation(fields: [organizationId], references: [id])
   preparationLogs PreparationLog[]
-  salesOrders     SalesOrder[]
-  userAssignments UserOutletAssignment[]
   wastageRecords  WastageRecord[]
+  breakageRecords BreakageRecord[]
+  salesOrders     SalesOrder[]
 
   @@index([organizationId])
   @@map("outlets")
 }
 
+// =============================================================================
+// 2. Authentication & Outlet Assignments
+// =============================================================================
+
+enum AppRole {
+  ADMIN    @map("admin")
+  MANAGER  @map("manager")
+  OPERATOR @map("operator")
+}
+
 model UserAccount {
-  id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId      String                 @map("organization_id") @db.Uuid
-  username            String                 @unique
-  passwordHash        String                 @map("password_hash")
-  role                AppRole
-  displayName         String                 @map("display_name")
-  isActive            Boolean                @default(true) @map("is_active")
-  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  recordedBreakage    BreakageRecord[]       @relation("BreakageRecordedBy")
-  recordedPreparation PreparationLog[]       @relation("PreparationRecordedBy")
-  organization        Organization           @relation(fields: [organizationId], references: [id])
-  outletAssignments   UserOutletAssignment[]
-  sessions            UserSession[]
-  recordedWastage     WastageRecord[]        @relation("WastageRecordedBy")
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  username       String   @unique // e.g. "admin", "mgr-kozhikode", "op-koz-001"
+  passwordHash   String   @map("password_hash")
+  role           AppRole
+  displayName    String   @map("display_name")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  outletAssignments UserOutletAssignment[]
+  sessions          UserSession[]
+  recordedPreparation PreparationLog[]     @relation("PreparationRecordedBy")
+  recordedWastage   WastageRecord[]        @relation("WastageRecordedBy")
+  recordedBreakage  BreakageRecord[]       @relation("BreakageRecordedBy")
 
   @@index([organizationId])
   @@map("user_accounts")
 }
 
 model UserSession {
-  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId           String      @map("user_id") @db.Uuid
-  sessionTokenHash String      @unique @map("session_token_hash")
-  ipAddress        String?     @map("ip_address")
-  userAgent        String?     @map("user_agent")
-  expiresAt        DateTime    @map("expires_at") @db.Timestamptz(6)
-  revokedAt        DateTime?   @map("revoked_at") @db.Timestamptz(6)
-  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  lastActiveAt     DateTime    @default(now()) @map("last_active_at") @db.Timestamptz(6)
-  user             UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  sessionTokenHash String @unique @map("session_token_hash") // SHA-256 hash of token/session id
+  ipAddress    String?   @map("ip_address")
+  userAgent    String?   @map("user_agent")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  lastActiveAt DateTime  @default(now()) @map("last_active_at") @db.Timestamptz
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([sessionTokenHash])
@@ -92,25 +110,27 @@ model UserSession {
 }
 
 model LoginAttempt {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identifier     String    @unique
-  attempts       Int       @default(1)
-  lockUntil      DateTime? @map("lock_until") @db.Timestamptz(6)
-  firstAttemptAt DateTime  @default(now()) @map("first_attempt_at") @db.Timestamptz(6)
-  lastAttemptAt  DateTime  @default(now()) @map("last_attempt_at") @db.Timestamptz(6)
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String   // e.g. "ip:192.168.1.1" or "user:admin"
+  attempts   Int      @default(1)
+  lockUntil  DateTime? @map("lock_until") @db.Timestamptz
+  firstAttemptAt DateTime @default(now()) @map("first_attempt_at") @db.Timestamptz
+  lastAttemptAt  DateTime @default(now()) @map("last_attempt_at") @db.Timestamptz
 
+  @@unique([identifier])
   @@index([identifier])
   @@map("login_attempts")
 }
 
 model UserOutletAssignment {
-  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String      @map("user_id") @db.Uuid
-  outletId  String      @map("outlet_id") @db.Uuid
-  isDefault Boolean     @default(false) @map("is_default")
-  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  outlet    Outlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
-  user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  outletId  String   @map("outlet_id") @db.Uuid
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user   UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outlet Outlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
   @@unique([userId, outletId])
   @@index([userId])
@@ -118,21 +138,26 @@ model UserOutletAssignment {
   @@map("user_outlet_assignments")
 }
 
+// =============================================================================
+// 3. Outlet-Specific Departments & Employee Master (Decoupled from Users)
+// =============================================================================
+
 model Department {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId           String            @map("outlet_id") @db.Uuid
-  departmentCode     String            @map("department_code")
-  name               String
-  benchmarkHeadcount Int               @default(0) @map("benchmark_headcount")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  isActive           Boolean           @default(true) @map("is_active")
-  breakageRecords    BreakageRecord[]
-  outlet             Outlet            @relation(fields: [outletId], references: [id])
-  employees          Employee[]
-  preparationItems   PreparationItem[]
-  preparationLogs    PreparationLog[]
-  wastageRecords     WastageRecord[]
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId           String   @map("outlet_id") @db.Uuid
+  departmentCode     String   @map("department_code") // e.g. "D01", "D02"
+  name               String   // e.g. "Kitchen", "Service", "Cleaning"
+  benchmarkHeadcount Int      @default(0) @map("benchmark_headcount")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet           Outlet            @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  employees        Employee[]
+  breakageRecords  BreakageRecord[]
+  preparationItems PreparationItem[]
+  preparationLogs  PreparationLog[]
+  wastageRecords   WastageRecord[]
 
   @@unique([outletId, departmentCode])
   @@index([outletId])
@@ -140,18 +165,19 @@ model Department {
 }
 
 model Employee {
-  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId         String     @map("outlet_id") @db.Uuid
-  departmentId     String     @map("department_id") @db.Uuid
-  employeeCode     String     @map("employee_code")
-  name             String
-  role             String
-  monthlySalary    Decimal    @map("monthly_salary") @db.Decimal(12, 2)
-  employmentStatus String     @default("active") @map("employment_status")
-  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
-  department       Department @relation(fields: [departmentId], references: [id])
-  outlet           Outlet     @relation(fields: [outletId], references: [id])
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId         String   @map("outlet_id") @db.Uuid
+  departmentId     String   @map("department_id") @db.Uuid
+  employeeCode     String   @map("employee_code") // e.g. "E001"
+  name             String   // e.g. "Arun 1"
+  role             String   // e.g. "Cook", "Steward", "Captain"
+  monthlySalary    Decimal  @map("monthly_salary") @db.Decimal(12, 2)
+  employmentStatus String   @default("active") @map("employment_status")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet     Outlet     @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
 
   @@unique([outletId, employeeCode])
   @@index([outletId])
@@ -159,38 +185,49 @@ model Employee {
   @@map("employees")
 }
 
+// =============================================================================
+// 4. Organization-Level Menu & Recipe Master with Outlet Overrides
+// =============================================================================
+
 model Category {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  categoryCode   String       @map("category_code")
-  name           String
-  displayOrder   Int          @default(0) @map("display_order")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  products       Product[]
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  categoryCode   String   @map("category_code") // e.g. "C01", "C02"
+  name           String   // e.g. "South Indian", "Breads", "Curries"
+  displayOrder   Int      @default(0) @map("display_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  products     Product[]
 
   @@unique([organizationId, categoryCode])
   @@map("categories")
 }
 
+enum PreparationType {
+  BATCH       @map("batch")
+  FRESH_DAILY @map("fresh_daily")
+}
+
 model Product {
-  id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId      String                 @map("organization_id") @db.Uuid
-  categoryId          String                 @map("category_id") @db.Uuid
-  productCode         String                 @map("product_code")
-  name                String
-  defaultSellingPrice Decimal                @map("default_selling_price") @db.Decimal(10, 2)
-  foodCost            Decimal?               @map("food_cost") @db.Decimal(10, 2)
-  unit                String                 @default("portion")
-  preparationType     PreparationType        @default(BATCH) @map("preparation_type")
-  isActive            Boolean                @default(true) @map("is_active")
-  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  outletSettings      OutletProductSetting[]
-  category            Category               @relation(fields: [categoryId], references: [id])
-  organization        Organization           @relation(fields: [organizationId], references: [id])
-  recipes             RecipeItem[]
-  orderItems          SalesOrderItem[]
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String          @map("organization_id") @db.Uuid
+  categoryId          String          @map("category_id") @db.Uuid
+  productCode         String          @map("product_code") // e.g. "P001", "P009"
+  name                String          // e.g. "Masala Dosa", "Meals"
+  defaultSellingPrice Decimal         @map("default_selling_price") @db.Decimal(10, 2)
+  foodCost            Decimal?        @map("food_cost") @db.Decimal(10, 2) // Nullable, never false zero
+  unit                String          @default("portion") // "portion", "piece", "glass"
+  preparationType     PreparationType @default(BATCH) @map("preparation_type")
+  isActive            Boolean         @default(true) @map("is_active")
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  category       Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  recipes        RecipeItem[]
+  outletSettings OutletProductSetting[]
+  orderItems     SalesOrderItem[]
 
   @@unique([organizationId, productCode])
   @@index([organizationId, categoryId])
@@ -198,29 +235,31 @@ model Product {
 }
 
 model Ingredient {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  ingredientCode String       @map("ingredient_code")
-  name           String
-  unit           String
-  defaultCost    Decimal      @map("default_cost") @db.Decimal(12, 2)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  isActive       Boolean      @default(true) @map("is_active")
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  recipeItems    RecipeItem[]
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  ingredientCode String   @map("ingredient_code") // e.g. "I001"
+  name           String   // e.g. "Rice", "Toor Dal", "Ghee"
+  unit           String   // e.g. "kg", "liter"
+  defaultCost    Decimal  @map("default_cost") @db.Decimal(12, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  recipeItems  RecipeItem[]
 
   @@unique([organizationId, ingredientCode])
   @@map("ingredients")
 }
 
 model RecipeItem {
-  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId       String     @map("product_id") @db.Uuid
-  ingredientId    String     @map("ingredient_id") @db.Uuid
-  quantityPerUnit Decimal    @map("quantity_per_unit") @db.Decimal(10, 4)
-  ingredient      Ingredient @relation(fields: [ingredientId], references: [id])
-  product         Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  ingredientId    String   @map("ingredient_id") @db.Uuid
+  quantityPerUnit Decimal  @map("quantity_per_unit") @db.Decimal(10, 4) // e.g. 0.18 kg Rice for Meals
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
 
   @@unique([productId, ingredientId])
   @@index([productId])
@@ -228,34 +267,40 @@ model RecipeItem {
 }
 
 model OutletProductSetting {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId       String   @map("outlet_id") @db.Uuid
-  productId      String   @map("product_id") @db.Uuid
-  priceOverride  Decimal? @map("price_override") @db.Decimal(10, 2)
-  isAvailable    Boolean  @default(true) @map("is_available")
-  petpoojaItemId String?  @map("petpooja_item_id")
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  outlet         Outlet   @relation(fields: [outletId], references: [id])
-  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId         String   @map("outlet_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  priceOverride    Decimal? @map("price_override") @db.Decimal(10, 2) // Nullable; falls back to defaultSellingPrice
+  isAvailable      Boolean  @default(true) @map("is_available")
+  petpoojaItemId   String?  @map("petpooja_item_id") // External POS Item ID mapping per outlet
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet  Outlet  @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([outletId, productId])
   @@index([outletId])
   @@map("outlet_product_settings")
 }
 
+// =============================================================================
+// 5. Preparation Items & Operational Logs (Attributed to UserAccount)
+// =============================================================================
+
 model PreparationItem {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String           @map("organization_id") @db.Uuid
-  departmentId    String?          @map("department_id") @db.Uuid
-  name            String
-  code            String
-  unit            String
-  standardCost    Decimal?         @map("standard_cost") @db.Decimal(12, 2)
-  isActive        Boolean          @default(true) @map("is_active")
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  department      Department?      @relation(fields: [departmentId], references: [id])
-  organization    Organization     @relation(fields: [organizationId], references: [id])
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  departmentId   String?  @map("department_id") @db.Uuid // Optional kitchen department
+  name           String   // e.g. "Rice", "Sambar", "Coconut Chutney", "Idli Batter"
+  code           String   // e.g. "PREP-001"
+  unit           String   // e.g. "kg", "litre", "portion"
+  standardCost   Decimal? @map("standard_cost") @db.Decimal(12, 2) // Optional unit preparation/food cost
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  department      Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   preparationLogs PreparationLog[]
   wastageRecords  WastageRecord[]
 
@@ -266,20 +311,21 @@ model PreparationItem {
 }
 
 model PreparationLog {
-  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId          String          @map("outlet_id") @db.Uuid
-  preparationItemId String          @map("preparation_item_id") @db.Uuid
-  departmentId      String?         @map("department_id") @db.Uuid
-  recordedById      String          @map("recorded_by_id") @db.Uuid
-  date              DateTime        @db.Date
-  quantity          Decimal         @db.Decimal(10, 3)
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid
+  date              DateTime @db.Date
+  quantity          Decimal  @db.Decimal(10, 3) // Prepared quantity
   notes             String?
-  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  department        Department?     @relation(fields: [departmentId], references: [id])
-  outlet            Outlet          @relation(fields: [outletId], references: [id])
-  preparationItem   PreparationItem @relation(fields: [preparationItemId], references: [id])
-  recordedBy        UserAccount     @relation("PreparationRecordedBy", fields: [recordedById], references: [id])
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("PreparationRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
   @@index([outletId, date])
   @@index([preparationItemId])
@@ -288,23 +334,24 @@ model PreparationLog {
 }
 
 model WastageRecord {
-  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId          String          @map("outlet_id") @db.Uuid
-  recordedById      String          @map("recorded_by_id") @db.Uuid
-  date              DateTime        @db.Date
-  wastedQuantity    Decimal         @map("wasted_quantity") @db.Decimal(10, 3)
-  estimatedCost     Decimal?        @map("estimated_cost") @db.Decimal(12, 2)
-  reason            String
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId          String   @map("outlet_id") @db.Uuid
+  preparationItemId String   @map("preparation_item_id") @db.Uuid
+  departmentId      String?  @map("department_id") @db.Uuid
+  recordedById      String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
+  date              DateTime @db.Date
+  wastedQuantity    Decimal  @map("wasted_quantity") @db.Decimal(10, 3)
+  unitCost          Decimal? @map("unit_cost") @db.Decimal(12, 2) // Server-populated, nullable if not configured
+  estimatedCost     Decimal? @map("estimated_cost") @db.Decimal(12, 2) // Server-computed (wastedQuantity * unitCost)
+  reason            String   // e.g. "Over-preparation", "End-of-day unsold", "Spoilage"
   notes             String?
-  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  departmentId      String?         @map("department_id") @db.Uuid
-  preparationItemId String          @map("preparation_item_id") @db.Uuid
-  unitCost          Decimal?        @map("unit_cost") @db.Decimal(12, 2)
-  department        Department?     @relation(fields: [departmentId], references: [id])
-  outlet            Outlet          @relation(fields: [outletId], references: [id])
-  preparationItem   PreparationItem @relation(fields: [preparationItemId], references: [id])
-  recordedBy        UserAccount     @relation("WastageRecordedBy", fields: [recordedById], references: [id])
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet          Outlet          @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  preparationItem PreparationItem @relation(fields: [preparationItemId], references: [id], onDelete: Restrict)
+  department      Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  recordedBy      UserAccount     @relation("WastageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
   @@index([outletId, date])
   @@index([preparationItemId])
@@ -313,22 +360,23 @@ model WastageRecord {
 }
 
 model BreakageRecord {
-  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId     String      @map("outlet_id") @db.Uuid
-  departmentId String      @map("department_id") @db.Uuid
-  recordedById String      @map("recorded_by_id") @db.Uuid
-  date         DateTime    @db.Date
-  item         String
-  brokenQty    Int         @map("broken_qty")
-  unitCost     Decimal?    @map("unit_cost") @db.Decimal(12, 2)
-  totalCost    Decimal?    @map("total_cost") @db.Decimal(12, 2)
-  reason       String
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId     String   @map("outlet_id") @db.Uuid
+  departmentId String   @map("department_id") @db.Uuid // Strict FK to departments.id
+  recordedById String   @map("recorded_by_id") @db.Uuid // Strict FK to user_accounts.id
+  date         DateTime @db.Date
+  item         String   // e.g. "Cup", "Dinner Plate", "Glass"
+  brokenQty    Int      @map("broken_qty")
+  unitCost     Decimal? @map("unit_cost") @db.Decimal(12, 2) // Server-populated, nullable if no replacement cost master exists
+  totalCost    Decimal? @map("total_cost") @db.Decimal(12, 2) // Server-computed, nullable
+  reason       String   // e.g. "Handling damage", "Dropped"
   notes        String?
-  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  department   Department  @relation(fields: [departmentId], references: [id])
-  outlet       Outlet      @relation(fields: [outletId], references: [id])
-  recordedBy   UserAccount @relation("BreakageRecordedBy", fields: [recordedById], references: [id])
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  outlet     Outlet      @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  department Department  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  recordedBy UserAccount @relation("BreakageRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
   @@index([outletId, date])
   @@index([departmentId])
@@ -337,16 +385,17 @@ model BreakageRecord {
 }
 
 model BreakageItem {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String       @map("organization_id") @db.Uuid
-  code            String
-  name            String
-  category        String       @default("Tableware")
-  replacementCost Decimal?     @map("replacement_cost") @db.Decimal(12, 2)
-  isActive        Boolean      @default(true) @map("is_active")
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization    Organization @relation(fields: [organizationId], references: [id])
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  code            String   // e.g. "BRK-001"
+  name            String   // e.g. "Dinner Plate", "Water Glass", "Tea Cup"
+  category        String   @default("Tableware") // "Tableware", "Glassware", "Cutlery", "Kitchenware"
+  replacementCost Decimal? @map("replacement_cost") @db.Decimal(12, 2)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, code])
   @@index([organizationId])
@@ -354,16 +403,17 @@ model BreakageItem {
 }
 
 model WastageReason {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  code           String
-  label          String
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "WR-01"
+  label          String   // e.g. "Overproduction", "Spoilage", "Quality Issue"
   description    String?
-  displayOrder   Int          @default(0) @map("display_order")
-  isActive       Boolean      @default(true) @map("is_active")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, code])
   @@index([organizationId])
@@ -371,39 +421,45 @@ model WastageReason {
 }
 
 model BreakageReason {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  code           String
-  label          String
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String   // e.g. "BR-01"
+  label          String   // e.g. "Dropped", "Cracked", "Handling damage"
   description    String?
-  displayOrder   Int          @default(0) @map("display_order")
-  isActive       Boolean      @default(true) @map("is_active")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  displayOrder   Int      @default(0) @map("display_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, code])
   @@index([organizationId])
   @@map("breakage_reasons")
 }
 
+// =============================================================================
+// 6. Normalized POS Sales Orders & Items
+// =============================================================================
+
 model SalesOrder {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId        String           @map("outlet_id") @db.Uuid
-  petpoojaOrderId String           @map("petpooja_order_id")
-  orderDate       DateTime         @map("order_date") @db.Date
-  orderedAt       DateTime         @map("ordered_at") @db.Timestamptz(6)
-  orderType       String           @map("order_type")
-  coreTotal       Decimal?         @map("core_total") @db.Decimal(12, 2)
-  taxTotal        Decimal?         @map("tax_total") @db.Decimal(12, 2)
-  discountTotal   Decimal?         @map("discount_total") @db.Decimal(12, 2)
-  totalAmount     Decimal?         @map("total_amount") @db.Decimal(12, 2)
-  financialStatus String           @default("pending") @map("financial_status")
-  matchingStatus  String           @default("unmatched") @map("matching_status")
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  status          String           @default("Success")
-  items           SalesOrderItem[]
-  outlet          Outlet           @relation(fields: [outletId], references: [id])
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId        String   @map("outlet_id") @db.Uuid
+  petpoojaOrderId String   @map("petpooja_order_id")
+  orderDate       DateTime @map("order_date") @db.Date
+  orderedAt       DateTime @map("ordered_at") @db.Timestamptz
+  orderType       String   @map("order_type") // DineIn, Delivery, Takeaway
+  status          String   @default("Success") // Petpooja order status: "Success", "Cancelled"
+  coreTotal       Decimal? @map("core_total") @db.Decimal(12, 2)
+  taxTotal        Decimal? @map("tax_total") @db.Decimal(12, 2)
+  discountTotal   Decimal? @map("discount_total") @db.Decimal(12, 2)
+  totalAmount     Decimal? @map("total_amount") @db.Decimal(12, 2)
+  financialStatus String   @default("pending") @map("financial_status")
+  matchingStatus  String   @default("unmatched") @map("matching_status")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  outlet Outlet           @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  items  SalesOrderItem[]
 
   @@unique([outletId, petpoojaOrderId])
   @@index([outletId, orderDate])
@@ -411,30 +467,20 @@ model SalesOrder {
 }
 
 model SalesOrderItem {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  salesOrderId String     @map("sales_order_id") @db.Uuid
-  productId    String?    @map("product_id") @db.Uuid
-  itemName     String     @map("item_name")
-  quantity     Decimal    @db.Decimal(10, 3)
-  unitPrice    Decimal    @map("unit_price") @db.Decimal(10, 2)
-  totalAmount  Decimal    @map("total_amount") @db.Decimal(12, 2)
-  itemTax      Decimal?   @map("item_tax") @db.Decimal(10, 2)
-  itemDiscount Decimal?   @map("item_discount") @db.Decimal(10, 2)
-  product      Product?   @relation(fields: [productId], references: [id])
-  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesOrderId String   @map("sales_order_id") @db.Uuid
+  productId    String?  @map("product_id") @db.Uuid // Nullable if unmatched to master
+  itemName     String   @map("item_name")
+  quantity     Decimal  @db.Decimal(10, 3)
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(10, 2)
+  totalAmount  Decimal  @map("total_amount") @db.Decimal(12, 2)
+  itemTax      Decimal? @map("item_tax") @db.Decimal(10, 2)
+  itemDiscount Decimal? @map("item_discount") @db.Decimal(10, 2)
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product    Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([salesOrderId])
   @@index([productId])
   @@map("sales_order_items")
-}
-
-enum AppRole {
-  ADMIN    @map("admin")
-  MANAGER  @map("manager")
-  OPERATOR @map("operator")
-}
-
-enum PreparationType {
-  BATCH       @map("batch")
-  FRESH_DAILY @map("fresh_daily")
 }
