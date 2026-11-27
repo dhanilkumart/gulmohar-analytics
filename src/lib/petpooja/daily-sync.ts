@@ -41,7 +41,7 @@ export interface SyncState {
 export type HistoryEvent = {
   event: string; runId: string; at: string; date?: string; outcome?: string;
   received?: number; created?: number; updated?: number; skipped?: number; failed?: number;
-  pages?: number; unmappedItems?: number; durationMs?: number; errorStages?: string[]; pending?: string[];
+  pages?: number; unmappedItems?: number; durationMs?: number; errorStages?: string[]; diagnostic?: string; pending?: string[];
 };
 
 // State is atomically replaced; every history event is flushed before continuing.
@@ -137,11 +137,13 @@ export async function runDailySync(options: DailySyncOptions, history: SyncHisto
       continue;
     }
     const complete = !options.signal.aborted && completeSync(result);
+    const apiDiagnostic = result.errors.find(error => error.stage === "api")?.diagnostic;
     await event({
       event: "date_finished", date, outcome: complete ? result.totalOrdersReceived ? "success" : "success_empty" : options.signal.aborted ? "interrupted" : "partial_or_failed",
       received: result.totalOrdersReceived, created: result.created, updated: result.updated,
       skipped: result.skipped, failed: result.failed, pages: result.pagesFetched, unmappedItems: result.unmappedItems, durationMs: result.durationMs,
       errorStages: [...new Set(result.errors.map(error => error.stage))],
+      ...(apiDiagnostic ? { diagnostic: apiDiagnostic } : {}),
     });
     if (complete) {
       state.pending = state.pending.filter(value => value !== date);

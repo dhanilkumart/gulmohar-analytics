@@ -3,7 +3,12 @@ import {
   PetpoojaPaginationResult,
   PetpoojaPullOrderEntry,
 } from "@/types/petpooja";
-import { PetpoojaGetOrdersClient } from "./get-orders-client";
+import {
+  PetpoojaApiError,
+  PetpoojaGetOrdersClient,
+  PetpoojaHttpError,
+  PetpoojaTimeoutError,
+} from "./get-orders-client";
 import { normalizePetpoojaBatch } from "./normalizer";
 import { PetpoojaResolver } from "./resolver";
 import {
@@ -20,6 +25,56 @@ export interface SyncErrorDetail {
   petpoojaOrderId?: string;
   field?: string;
   message: string;
+  diagnostic?: string;
+}
+
+const ALLOWLISTED_NETWORK_ERROR_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "CERT_HAS_EXPIRED",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+function extractNetworkErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const directCode = "code" in error && typeof error.code === "string" ? error.code : undefined;
+  if (directCode && ALLOWLISTED_NETWORK_ERROR_CODES.has(directCode)) return directCode;
+  if ("cause" in error && error.cause && typeof error.cause === "object") {
+    const causeCode = "code" in error.cause && typeof error.cause.code === "string" ? error.cause.code : undefined;
+    if (causeCode && ALLOWLISTED_NETWORK_ERROR_CODES.has(causeCode)) return causeCode;
+  }
+  return undefined;
+}
+
+/**
+ * Produces a safe, credential-free diagnostic classification for API-stage errors.
+ */
+export function classifyApiError(error: unknown): string {
+  if (error instanceof PetpoojaHttpError) {
+    const status = Number.isSafeInteger(error.status) ? String(error.status) : "unknown";
+    return `PetpoojaHttpError:http_${status}`;
+  }
+  if (error instanceof PetpoojaApiError) {
+    const code =
+      typeof error.code === "string" && /^\d{1,16}$/.test(error.code) && Number.isSafeInteger(Number(error.code))
+        ? error.code
+        : "unknown";
+    const success = error.success === "0" || error.success === "1" ? error.success : "unknown";
+    return `PetpoojaApiError:code_${code}:success_${success}`;
+  }
+  if (error instanceof PetpoojaTimeoutError) {
+    return "PetpoojaTimeoutError";
+  }
+  const networkCode = extractNetworkErrorCode(error);
+  if (networkCode) {
+    return `NetworkError:${networkCode}`;
+  }
+  return "UnknownApiError";
 }
 
 /**
@@ -123,10 +178,11 @@ export class PetpoojaSyncOrchestrator {
     let pullResult: PetpoojaPaginationResult;
     try {
       pullResult = await this.client.fetchAllOrders(trimmedDate, options);
-    } catch (apiErr: any) {
+    } catch (apiErr: unknown) {
       errors.push({
         stage: "api",
-        message: apiErr.message || String(apiErr),
+        message: apiErr instanceof Error ? apiErr.message : String(apiErr),
+        diagnostic: classifyApiError(apiErr),
       });
 
       return {

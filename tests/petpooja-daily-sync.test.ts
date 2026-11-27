@@ -6,8 +6,8 @@ import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { completeSync, istDate, runDailySync, SyncHistory, validSyncDate, type DailySyncOptions } from "../src/lib/petpooja/daily-sync";
 import { retrySync, ScheduledPetpoojaClient, transientSyncError } from "../src/lib/petpooja/sync-retry";
-import { PetpoojaGetOrdersClient, PetpoojaHttpError, PetpoojaTimeoutError } from "../src/lib/petpooja/get-orders-client";
-import type { PetpoojaSyncResult } from "../src/lib/petpooja/sync";
+import { PetpoojaApiError, PetpoojaGetOrdersClient, PetpoojaHttpError, PetpoojaTimeoutError } from "../src/lib/petpooja/get-orders-client";
+import { classifyApiError, type PetpoojaSyncResult } from "../src/lib/petpooja/sync";
 import type { PetpoojaGetOrdersResponse } from "../src/types/petpooja";
 
 const result = (date: string, overrides: Partial<PetpoojaSyncResult> = {}): PetpoojaSyncResult => ({
@@ -199,5 +199,56 @@ test("ambiguous and incomplete CLI arguments fail before connecting", () => {
     });
     assert.equal(child.status, 1);
     assert.ok(child.stderr.includes('"reason":"invalid_arguments"'));
+  }
+});
+
+test("classifyApiError produces safe diagnostics without exposing secrets or messages", () => {
+  const httpDiag = classifyApiError(new PetpoojaHttpError(401, "Unauthorized", "secret-body-token"));
+  assert.equal(httpDiag, "PetpoojaHttpError:http_401");
+  assert.equal(httpDiag.includes("secret-body-token"), false);
+
+  const apiDiag = classifyApiError(new PetpoojaApiError("Invalid app_key=xyz", "403", "0"));
+  assert.equal(apiDiag, "PetpoojaApiError:code_403:success_0");
+  assert.equal(apiDiag.includes("app_key"), false);
+  assert.equal(classifyApiError(new PetpoojaApiError("ok", "200", "1")), "PetpoojaApiError:code_200:success_1");
+
+  const invalidApiDiag = classifyApiError(new PetpoojaApiError("raw", "not-a-number", "bad-success"));
+  assert.equal(invalidApiDiag, "PetpoojaApiError:code_unknown:success_unknown");
+  assert.equal(classifyApiError(new PetpoojaApiError("raw", "99999999999999999999", "2")), "PetpoojaApiError:code_unknown:success_unknown");
+  assert.equal(classifyApiError(new PetpoojaApiError("raw", "403", true as unknown as string)), "PetpoojaApiError:code_403:success_unknown");
+  assert.equal(classifyApiError(new PetpoojaApiError("raw", "403", 1 as unknown as string)), "PetpoojaApiError:code_403:success_unknown");
+
+  assert.equal(classifyApiError(new PetpoojaTimeoutError(30000)), "PetpoojaTimeoutError");
+  assert.equal(classifyApiError(Object.assign(new Error("dns"), { code: "ENOTFOUND" })), "NetworkError:ENOTFOUND");
+  assert.equal(classifyApiError(new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } })), "NetworkError:ECONNREFUSED");
+  assert.equal(classifyApiError(Object.assign(new Error("secret-msg"), { code: "EOTHER" })), "UnknownApiError");
+
+  const unknownDiag = classifyApiError(new Error("sensitive-credential-leak"));
+  assert.equal(unknownDiag, "UnknownApiError");
+  assert.equal(unknownDiag.includes("sensitive"), false);
+});
+
+test("daily sync history persists safe API diagnostic and never raw exception messages", async t => {
+  const history = await fixture(t);
+  const code = await runDailySync(options(), history, async date => result(date, {
+    success: false,
+    pagesFetched: 0,
+    totalOrdersReceived: 0,
+    created: 0,
+    updated: 0,
+    errors: [{
+      stage: "api",
+      message: "secret-app-key-and-cookie-leak",
+      diagnostic: "PetpoojaHttpError:http_401",
+    }],
+  }));
+  assert.equal(code, 2);
+  const rawHistory = await readFile(join(history.directory, "history.jsonl"), "utf8");
+  assert.equal(rawHistory.includes("secret-app-key-and-cookie-leak"), false);
+  const finished = (await events(history)).filter(event => event.event === "date_finished");
+  assert.equal(finished.length, 2);
+  for (const event of finished) {
+    assert.deepEqual(event.errorStages, ["api"]);
+    assert.equal(event.diagnostic, "PetpoojaHttpError:http_401");
   }
 });
