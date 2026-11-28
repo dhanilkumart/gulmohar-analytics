@@ -53,4 +53,5 @@ next-env.d.ts
 /tmp/
 
 # Local-only documentation
-/docs/
+# /docs/
+/docs/archive/
