@@ -60,15 +60,6 @@ export function Sidebar({
       <div className="flex-1 overflow-y-auto">
         <SidebarNav collapsed={collapsed} onNavigate={onNavigate} />
       </div>
-      {!collapsed ? (
-        <div className="bg-secondary mx-4 rounded-2xl p-4">
-          <p className="text-xs font-semibold">Data coverage</p>
-          <p className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
-            Preparation and wastage analytics cover tracked preparation items only. One year of
-            history is available.
-          </p>
-        </div>
-      ) : null}
     </div>
   );
 }
